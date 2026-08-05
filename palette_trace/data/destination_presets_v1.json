@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "destinations": {
+    "illustration": {
+      "presetVersion": 1,
+      "geometry": {
+        "policy": "stacked",
+        "underlap": { "value": 0.5, "unit": "source_px" },
+        "trapping": { "value": 0.0, "unit": "mm" },
+        "preserveOuterSilhouette": true,
+        "validateClosedPaths": false,
+        "detectDuplicateGeometry": false
+      },
+      "globalTraceProfileId": "default",
+      "exactPickedColors": true,
+      "hideSourceImageAfterApply": false
+    },
+    "logo_branding": {
+      "presetVersion": 1,
+      "geometry": {
+        "policy": "stacked",
+        "underlap": { "value": 0.25, "unit": "source_px" },
+        "trapping": { "value": 0.0, "unit": "mm" },
+        "preserveOuterSilhouette": true,
+        "validateClosedPaths": true,
+        "detectDuplicateGeometry": true
+      },
+      "globalTraceProfileId": "smooth_shapes",
+      "exactPickedColors": true,
+      "hideSourceImageAfterApply": false
+    },
+    "screen_printing": {
+      "presetVersion": 1,
+      "geometry": {
+        "policy": "stacked_trapped",
+        "underlap": { "value": 0.0, "unit": "source_px" },
+        "trapping": { "value": 0.25, "unit": "mm" },
+        "preserveOuterSilhouette": true,
+        "validateClosedPaths": false,
+        "detectDuplicateGeometry": false
+      },
+      "globalTraceProfileId": "default",
+      "exactPickedColors": true,
+      "hideSourceImageAfterApply": false
+    },
+    "vinyl_paper": {
+      "presetVersion": 1,
+      "geometry": {
+        "policy": "exclusive_layers",
+        "underlap": { "value": 0.0, "unit": "source_px" },
+        "trapping": { "value": 0.0, "unit": "mm" },
+        "preserveOuterSilhouette": true,
+        "validateClosedPaths": true,
+        "detectDuplicateGeometry": true
+      },
+      "globalTraceProfileId": "fabrication_clean",
+      "exactPickedColors": true,
+      "hideSourceImageAfterApply": false
+    },
+    "laser": {
+      "presetVersion": 1,
+      "geometry": {
+        "policy": "separate_operations",
+        "underlap": { "value": 0.0, "unit": "source_px" },
+        "trapping": { "value": 0.0, "unit": "mm" },
+        "preserveOuterSilhouette": true,
+        "validateClosedPaths": true,
+        "detectDuplicateGeometry": true
+      },
+      "globalTraceProfileId": "fabrication_clean",
+      "exactPickedColors": true,
+      "hideSourceImageAfterApply": false
+    },
+    "custom": {
+      "presetVersion": 1,
+      "geometry": {
+        "policy": "stacked",
+        "underlap": { "value": 0.0, "unit": "source_px" },
+        "trapping": { "value": 0.0, "unit": "mm" },
+        "preserveOuterSilhouette": true,
+        "validateClosedPaths": false,
+        "detectDuplicateGeometry": false
+      },
+      "globalTraceProfileId": "default",
+      "exactPickedColors": true,
+      "hideSourceImageAfterApply": false
+    }
+  }
+}

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Palette Trace — Art-Directed Multicolour Tracing</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-header">
+    <div class="brand">
+      <span class="logo-icon">🎨</span>
+      <h1>Palette Trace</h1>
+      <span class="badge">Inkscape 1.4+</span>
+    </div>
+    <div class="header-actions">
+      <button id="btn-load-preset" class="btn btn-secondary" title="Load saved user preset">Load Preset</button>
+      <button id="btn-save-preset" class="btn btn-secondary" title="Save current settings as preset">Save Preset</button>
+      <button id="btn-cancel" class="btn btn-secondary">Cancel</button>
+      <button id="btn-apply" class="btn btn-primary">Apply Trace</button>
+    </div>
+  </div>
+
+  <main class="app-layout">
+    <!-- Left Panel: Controls & Palette -->
+    <section class="control-panel">
+      <div class="panel-section">
+        <h2>Destination & Global Settings</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="select-destination">Destination Preset</label>
+            <select id="select-destination">
+              <option value="illustration">Illustration</option>
+              <option value="logo_branding">Logo / Branding</option>
+              <option value="screen_printing">Screen Printing</option>
+              <option value="vinyl_paper">Vinyl / Paper Cutting</option>
+              <option value="laser">Laser Work</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="input-scans">Number of Scans (1–64)</label>
+            <input type="number" id="input-scans" min="1" max="64" value="4">
+          </div>
+
+          <div class="form-group">
+            <label for="select-backend">Tracing Backend</label>
+            <select id="select-backend">
+              <option value="auto">Auto (Best Available)</option>
+              <option value="potrace">Potrace (Native)</option>
+              <option value="vtracer">VTracer (Native)</option>
+              <option value="python_contour">Python Contour (Fallback)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-header">
+          <h2>Palette Scans</h2>
+          <span id="scan-count-badge" class="badge">4 scans</span>
+        </div>
+        <p class="section-help">Click canvas to sample & pin colors. Adjust <strong>Colour Reach</strong> to claim nearby source colors.</p>
+        
+        <div id="palette-list" class="palette-list" role="list">
+          <!-- Dynamically populated palette rows -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Panel: Interactive Canvas Preview -->
+    <section class="preview-panel">
+      <div class="preview-toolbar">
+        <div class="view-modes" role="radiogroup" aria-label="Preview Modes">
+          <button class="mode-btn active" data-mode="source">Source</button>
+          <button class="mode-btn" data-mode="quantized">Quantized</button>
+          <button class="mode-btn" data-mode="claim">Claim Heatmap</button>
+          <button class="mode-btn" data-mode="vector">Vector Preview</button>
+        </div>
+        <div class="zoom-controls">
+          <button id="btn-zoom-out" class="btn btn-icon" title="Zoom Out">−</button>
+          <span id="zoom-level">100%</span>
+          <button id="btn-zoom-in" class="btn btn-icon" title="Zoom In">+</button>
+          <button id="btn-zoom-reset" class="btn btn-secondary">Fit</button>
+        </div>
+      </div>
+
+      <div class="canvas-viewport" id="canvas-viewport">
+        <canvas id="preview-canvas"></canvas>
+        <div id="canvas-overlay" class="canvas-overlay">
+          <span id="picker-tooltip" class="picker-tooltip">Click to sample color</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

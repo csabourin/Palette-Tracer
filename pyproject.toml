@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palette-trace"
+version = "1.0.0"
+description = "Inkscape extension for art-directed multicolour bitmap tracing"
+readme = "README.md"
+authors = [{ name = "Christian Sabourin" }]
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.9"
+dependencies = [
+    "inkex>=1.2.0",
+    "Pillow>=9.0.0",
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+backends = [
+    "vtracer>=0.6.0",
+    "potracer>=0.0.4",
+]
+test = [
+    "pytest>=7.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
