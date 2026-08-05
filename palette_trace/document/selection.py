@@ -6,6 +6,7 @@ import os
 from typing import Optional
 import inkex
 from palette_trace.errors import SelectionError, ImageSourceError
+from palette_trace.document.settings_store import PT_NAMESPACE
 
 def validate_and_get_selected_image(svg_root: inkex.SvgDocumentElement, selection: dict) -> inkex.Image:
     """
@@ -22,11 +23,14 @@ def validate_and_get_selected_image(svg_root: inkex.SvgDocumentElement, selectio
     elem = selected_nodes[0]
 
     # Check if a generated trace group was selected instead of an image
-    if elem.tag.endswith("g") and elem.get("pt:generated") == "true":
-        target_uuid = elem.get("pt:source-image-uuid")
+    if elem.tag.endswith("g") and elem.get(f"{{{PT_NAMESPACE}}}generated") == "true":
+        target_uuid = elem.get(f"{{{PT_NAMESPACE}}}source-image-uuid")
         if target_uuid:
             # Locate image by pt:image-uuid
-            images = svg_root.xpath(f'//svg:image[@pt:image-uuid="{target_uuid}"]')
+            images = svg_root.xpath(f'//svg:image[@pt:image-uuid="{target_uuid}"]', namespaces={
+                "svg": inkex.NSS["svg"],
+                "pt": PT_NAMESPACE,
+            })
             if images:
                 return images[0]
 
