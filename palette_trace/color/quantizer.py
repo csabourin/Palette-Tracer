@@ -30,6 +30,9 @@ def run_deterministic_quantization(
     fixed_centers = fixed_centers or []
     fixed_count = len(fixed_centers)
 
+    # Cap target_count to number of available histogram entries
+    actual_target = min(target_count, len(histogram))
+
     # 1. Initialize centers
     # Sort histogram by weight descending, then packed_srgb ascending for determinism
     sorted_hist = sorted(histogram, key=lambda item: (-item["weight"], item["packed_srgb"]))
@@ -37,7 +40,7 @@ def run_deterministic_quantization(
     centers = list(fixed_centers)
 
     # Farthest-point initialization for remaining centers
-    while len(centers) < fixed_count + target_count and sorted_hist:
+    while len(centers) < fixed_count + actual_target and sorted_hist:
         if not centers:
             # First center: most frequent
             first = sorted_hist[0]

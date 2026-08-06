@@ -44,7 +44,7 @@ def test_reach_mapping():
 
 def test_neutral_color_guardrails():
     assert calculate_hue_confidence(0.0) == 0.0
-    assert calculate_hue_confidence(0.02) == 0.4
+    assert pytest.approx(calculate_hue_confidence(0.02), abs=1e-6) == 0.4
     assert calculate_hue_confidence(0.05) == 1.0
     assert calculate_hue_confidence(0.10) == 1.0
 
@@ -75,3 +75,4 @@ def test_deterministic_quantizer():
     res2 = run_deterministic_quantization(hist, 2)
     assert len(res1) == 2
     assert res1[0]["hex"] == res2[0]["hex"]
+
