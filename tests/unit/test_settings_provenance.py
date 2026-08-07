@@ -8,6 +8,8 @@ from palette_trace.settings import (
     compute_settings_hash,
     create_default_settings,
     record_generation_provenance,
+    reset_automatic_entries_preserving_pinned,
+    reset_settings_to_destination_defaults,
     source_has_changed,
     stored_fingerprint,
 )
@@ -89,3 +91,50 @@ class TestProvenance:
         edited = copy.deepcopy(settings)
         edited["palette"]["entries"][0]["name"] = "Renamed"
         assert compute_settings_hash(edited) != recorded
+
+
+class TestSourceChangeRecovery:
+    """§27 recovery choices offered when the source fingerprint has changed."""
+
+    def test_reset_automatic_preserves_pinned_entries(self):
+        settings = create_default_settings("uuid-1")
+        pinned = settings["palette"]["entries"][1]
+        pinned["kind"] = "pinned"
+        pinned["sourceAnchor"] = {"srgb": "#123456"}
+        pinned["name"] = "My red"
+
+        reset_automatic_entries_preserving_pinned(settings)
+
+        assert settings["palette"]["entries"][1]["sourceAnchor"] == {"srgb": "#123456"}
+        assert settings["palette"]["entries"][1]["name"] == "My red"
+
+    def test_reset_automatic_replaces_non_pinned_entries(self):
+        settings = create_default_settings("uuid-1")
+        settings["palette"]["entries"][0]["name"] = "Stale automatic"
+        settings["palette"]["entries"][0]["output"] = {
+            "mode": "automatic_centroid", "color": {"srgb": "#FFFFFF"},
+        }
+
+        reset_automatic_entries_preserving_pinned(settings)
+
+        assert settings["palette"]["entries"][0]["name"] == "Scan 1"
+        assert settings["palette"]["entries"][0]["output"]["color"] is None
+
+    def test_reset_automatic_preserves_entry_ids_and_count(self):
+        settings = create_default_settings("uuid-1")
+        original_ids = [e["id"] for e in settings["palette"]["entries"]]
+
+        reset_automatic_entries_preserving_pinned(settings)
+
+        assert [e["id"] for e in settings["palette"]["entries"]] == original_ids
+
+    def test_reset_to_destination_defaults_discards_palette_and_applies_geometry(self):
+        settings = create_default_settings("uuid-1")
+        settings["palette"]["entries"][0]["kind"] = "pinned"
+
+        fresh = reset_settings_to_destination_defaults("uuid-1", "laser")
+
+        assert fresh["imageUuid"] == "uuid-1"
+        assert fresh["destination"]["id"] == "laser"
+        assert fresh["geometry"]["policy"] == "separate_operations"
+        assert all(e["kind"] == "automatic" for e in fresh["palette"]["entries"])

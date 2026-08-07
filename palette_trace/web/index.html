@@ -7,93 +7,230 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app-header">
+  <a class="skip-link" href="#main-content">Skip to preview</a>
+
+  <div id="status-region" class="visually-hidden" role="status" aria-live="polite"></div>
+  <div id="alert-region" class="alert-banner" role="alert" hidden></div>
+
+  <header class="app-header">
     <div class="brand">
-      <span class="logo-icon">🎨</span>
+      <span class="logo-icon" aria-hidden="true">🎨</span>
       <h1>Palette Trace</h1>
-      <span class="badge">Inkscape 1.4+</span>
+      <span class="badge" id="source-changed-badge" hidden>Source changed</span>
     </div>
     <div class="header-actions">
-      <button id="btn-load-preset" class="btn btn-secondary" title="Load saved user preset">Load Preset</button>
-      <button id="btn-save-preset" class="btn btn-secondary" title="Save current settings as preset">Save Preset</button>
-      <button id="btn-cancel" class="btn btn-secondary">Cancel</button>
-      <button id="btn-apply" class="btn btn-primary">Apply Trace</button>
+      <button id="btn-load-preset" class="btn btn-secondary" type="button">Load preset…</button>
+      <button id="btn-save-preset" class="btn btn-secondary" type="button">Save preset…</button>
+      <button id="btn-cancel" class="btn btn-secondary" type="button">Cancel</button>
+      <button id="btn-apply" class="btn btn-primary" type="button">Apply trace</button>
     </div>
-  </div>
+  </header>
 
   <main class="app-layout">
-    <!-- Left Panel: Controls & Palette -->
-    <section class="control-panel">
-      <div class="panel-section">
-        <h2>Destination & Global Settings</h2>
+    <!-- Left: controls & palette -->
+    <section class="control-panel" aria-label="Trace controls">
+      <section class="panel-section">
+        <h2>Destination &amp; global settings</h2>
         <div class="form-grid">
           <div class="form-group">
-            <label for="select-destination">Destination Preset</label>
-            <select id="select-destination">
-              <option value="illustration">Illustration</option>
-              <option value="logo_branding">Logo / Branding</option>
-              <option value="screen_printing">Screen Printing</option>
-              <option value="vinyl_paper">Vinyl / Paper Cutting</option>
-              <option value="laser">Laser Work</option>
-              <option value="custom">Custom</option>
-            </select>
+            <label for="select-destination">Destination preset</label>
+            <select id="select-destination"></select>
           </div>
 
           <div class="form-group">
-            <label for="input-scans">Number of Scans (1–64)</label>
-            <input type="number" id="input-scans" min="1" max="64" value="4">
+            <label for="input-scans">Number of scans</label>
+            <input type="number" id="input-scans" min="1" max="64" value="4"
+                   aria-describedby="scans-help">
+            <p id="scans-help" class="field-help">Between 1 and 64.</p>
           </div>
 
           <div class="form-group">
-            <label for="select-backend">Tracing Backend</label>
+            <label for="select-backend">Tracing backend</label>
             <select id="select-backend">
-              <option value="auto">Auto (Best Available)</option>
-              <option value="potrace">Potrace (Native)</option>
-              <option value="vtracer">VTracer (Native)</option>
-              <option value="python_contour">Python Contour (Fallback)</option>
+              <option value="auto">Auto (best available)</option>
+              <option value="potrace">Potrace (native)</option>
+              <option value="vtracer">VTracer (native)</option>
+              <option value="python_contour">Python contour (fallback)</option>
             </select>
           </div>
-        </div>
-      </div>
 
-      <div class="panel-section">
+          <button id="btn-reset-destination" class="btn btn-secondary" type="button">
+            Reset to destination defaults
+          </button>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2 id="background-heading">Background</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="select-background-entry">Background entry</label>
+            <select id="select-background-entry" aria-describedby="background-help"></select>
+            <p id="background-help" class="field-help">The scan treated as the image backdrop, if any.</p>
+          </div>
+
+          <fieldset class="radio-fieldset" id="background-matching-fieldset">
+            <legend>Matching mode</legend>
+            <div class="radio-row">
+              <span class="radio-option">
+                <input type="radio" name="bg-matching" id="bg-matching-all" value="all_matching">
+                <label for="bg-matching-all">All matching pixels</label>
+              </span>
+              <span class="radio-option">
+                <input type="radio" name="bg-matching" id="bg-matching-edge" value="edge_connected">
+                <label for="bg-matching-edge">Edge-connected only</label>
+              </span>
+              <span class="radio-option">
+                <input type="radio" name="bg-matching" id="bg-matching-alpha" value="transparent">
+                <label for="bg-matching-alpha">Transparent pixels</label>
+              </span>
+            </div>
+          </fieldset>
+
+          <fieldset class="radio-fieldset" id="background-output-fieldset">
+            <legend>Output mode</legend>
+            <div class="radio-row">
+              <span class="radio-option">
+                <input type="radio" name="bg-output" id="bg-output-keep" value="keep_paths">
+                <label for="bg-output-keep">Keep paths</label>
+              </span>
+              <span class="radio-option">
+                <input type="radio" name="bg-output" id="bg-output-omit" value="omit">
+                <label for="bg-output-omit">Omit</label>
+              </span>
+              <span class="radio-option">
+                <input type="radio" name="bg-output" id="bg-output-rect" value="replace_with_rectangle">
+                <label for="bg-output-rect">Replace with rectangle</label>
+              </span>
+            </div>
+          </fieldset>
+        </div>
+      </section>
+
+      <section class="panel-section">
         <div class="section-header">
-          <h2>Palette Scans</h2>
+          <h2 id="palette-heading">Palette scans</h2>
           <span id="scan-count-badge" class="badge">4 scans</span>
         </div>
-        <p class="section-help">Click canvas to sample & pin colors. Adjust <strong>Colour Reach</strong> to claim nearby source colors.</p>
-        
-        <div id="palette-list" class="palette-list" role="list">
-          <!-- Dynamically populated palette rows -->
-        </div>
-      </div>
+        <p class="section-help">Click the preview to sample and pin a colour. Expand a scan to adjust its colour reach, role and trace profile.</p>
+        <p id="warnings-summary" class="warnings-summary" hidden></p>
+
+        <ul id="palette-list" class="palette-list" aria-labelledby="palette-heading">
+          <!-- Populated by app.js -->
+        </ul>
+      </section>
     </section>
 
-    <!-- Right Panel: Interactive Canvas Preview -->
-    <section class="preview-panel">
+    <!-- Right: interactive canvas preview -->
+    <section class="preview-panel" aria-label="Preview">
       <div class="preview-toolbar">
-        <div class="view-modes" role="radiogroup" aria-label="Preview Modes">
-          <button class="mode-btn active" data-mode="source">Source</button>
-          <button class="mode-btn" data-mode="quantized">Quantized</button>
-          <button class="mode-btn" data-mode="claim">Claim Heatmap</button>
-          <button class="mode-btn" data-mode="vector">Vector Preview</button>
-        </div>
+        <fieldset class="radio-fieldset preview-modes">
+          <legend>Preview mode</legend>
+          <div class="radio-row">
+            <span class="radio-option">
+              <input type="radio" name="preview-mode" id="mode-source" value="source" checked>
+              <label for="mode-source">Source</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="preview-mode" id="mode-quantized" value="quantized">
+              <label for="mode-quantized">Quantized</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="preview-mode" id="mode-claim" value="claim">
+              <label for="mode-claim">Claim heatmap</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="preview-mode" id="mode-vector" value="vector">
+              <label for="mode-vector">Vector preview</label>
+            </span>
+          </div>
+        </fieldset>
         <div class="zoom-controls">
-          <button id="btn-zoom-out" class="btn btn-icon" title="Zoom Out">−</button>
-          <span id="zoom-level">100%</span>
-          <button id="btn-zoom-in" class="btn btn-icon" title="Zoom In">+</button>
-          <button id="btn-zoom-reset" class="btn btn-secondary">Fit</button>
+          <button id="btn-zoom-out" class="btn btn-icon" type="button" aria-label="Zoom out">−</button>
+          <span id="zoom-level" aria-hidden="true">100%</span>
+          <button id="btn-zoom-in" class="btn btn-icon" type="button" aria-label="Zoom in">+</button>
+          <button id="btn-zoom-reset" class="btn btn-secondary" type="button">Fit to window</button>
         </div>
       </div>
+      <p id="preview-mode-description" class="preview-mode-description"></p>
 
       <div class="canvas-viewport" id="canvas-viewport">
-        <canvas id="preview-canvas"></canvas>
+        <canvas id="preview-canvas" tabindex="0" role="img"
+                aria-label="Source image preview. Click to sample a colour."></canvas>
         <div id="canvas-overlay" class="canvas-overlay">
-          <span id="picker-tooltip" class="picker-tooltip">Click to sample color</span>
+          <span id="picker-tooltip" class="picker-tooltip">Click the image to sample and pin a colour</span>
         </div>
       </div>
     </section>
   </main>
+
+  <!-- §27: source-fingerprint-changed recovery dialog -->
+  <dialog id="dialog-source-changed" class="app-dialog" aria-labelledby="source-changed-title">
+    <form method="dialog">
+      <h2 id="source-changed-title">The source bitmap has changed</h2>
+      <p>The source bitmap has changed since this Palette Trace configuration was last applied. Choose how to proceed:</p>
+      <div class="dialog-choice-list">
+        <button class="btn btn-secondary dialog-choice" type="button" data-action="recalculate">
+          Recalculate using existing settings
+        </button>
+        <button class="btn btn-secondary dialog-choice" type="button" data-action="reset_automatic">
+          Reset automatic palette, keep pinned colours
+        </button>
+        <button class="btn btn-secondary dialog-choice" type="button" data-action="destination_defaults">
+          Start from destination defaults
+        </button>
+        <button class="btn btn-secondary dialog-choice" type="button" data-action="cancel">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- §26: save preset dialog -->
+  <dialog id="dialog-save-preset" class="app-dialog" aria-labelledby="save-preset-title">
+    <form method="dialog" id="form-save-preset">
+      <h2 id="save-preset-title">Save preset</h2>
+      <div class="form-group">
+        <label for="preset-name">Name</label>
+        <input type="text" id="preset-name" required autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="preset-description">Description</label>
+        <textarea id="preset-description" rows="2"></textarea>
+      </div>
+      <fieldset class="radio-fieldset">
+        <legend>What to save</legend>
+        <div class="radio-row radio-row-vertical">
+          <span class="radio-option">
+            <input type="radio" name="preset-scope" id="scope-structure" value="structure">
+            <label for="scope-structure">Structure — destination, scan count, roles and trace profiles, no exact colours</label>
+          </span>
+          <span class="radio-option">
+            <input type="radio" name="preset-scope" id="scope-palette" value="palette">
+            <label for="scope-palette">Palette — exact colours, anchors, colour reach and roles</label>
+          </span>
+          <span class="radio-option">
+            <input type="radio" name="preset-scope" id="scope-full" value="full" checked>
+            <label for="scope-full">Full — everything reusable</label>
+          </span>
+        </div>
+      </fieldset>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-secondary" data-dialog-cancel>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- §26: load preset dialog -->
+  <dialog id="dialog-load-preset" class="app-dialog" aria-labelledby="load-preset-title">
+    <h2 id="load-preset-title">Load preset</h2>
+    <ul id="preset-list" class="preset-list" aria-label="Saved presets"></ul>
+    <p id="preset-list-empty" class="field-help" hidden>No saved presets yet.</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-secondary" data-dialog-cancel>Close</button>
+    </div>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

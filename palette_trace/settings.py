@@ -184,6 +184,42 @@ def record_generation_provenance(
     return settings
 
 
+def reset_automatic_entries_preserving_pinned(settings: dict) -> dict:
+    """
+    §27 "Reset automatic palette while preserving pinned colours" — one of the
+    four recovery choices offered when the source fingerprint has changed.
+
+    Pinned entries (and their id, so layer order and background selection
+    survive) are left untouched. Automatic entries are replaced with fresh
+    defaults at the same position, so a stale automatic output colour from the
+    previous image cannot linger.
+    """
+    entries = settings.get("palette", {}).get("entries", [])
+    rebuilt = [
+        entry if entry.get("kind") == "pinned" else create_palette_entry(i, entry.get("id"))
+        for i, entry in enumerate(entries)
+    ]
+    settings.setdefault("palette", {})["entries"] = rebuilt
+    return settings
+
+
+def reset_settings_to_destination_defaults(image_uuid: str, dest_id: str) -> dict:
+    """
+    §27 "Start from destination defaults" — the strongest of the four source-
+    change recovery choices. Unlike `apply_destination_preset`, this also
+    discards palette entries and picked colours; it is a full restart under
+    the chosen destination, not a resync of destination-governed fields.
+    """
+    # Imported locally to avoid a settings.py <-> presets.destination import
+    # cycle: destination.py's apply_destination_preset needs nothing from
+    # here at import time, but create_default_settings lives in this module.
+    from palette_trace.presets.destination import apply_destination_preset
+
+    settings = create_default_settings(image_uuid)
+    apply_destination_preset(settings, dest_id)
+    return settings
+
+
 def stored_fingerprint(settings: dict) -> str:
     """Returns the recorded source fingerprint, or an empty string (§27)."""
     return settings.get("source", {}).get("fingerprint", {}).get("value", "") or ""
