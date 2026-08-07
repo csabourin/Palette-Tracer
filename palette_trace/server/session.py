@@ -19,6 +19,9 @@ class AppSession:
         self.pipeline_output = None
         self.is_applied = False
         self.is_cancelled = False
+        #: True when a recorded source fingerprint no longer matches (§27).
+        #: The interface must offer the recovery choices before applying.
+        self.source_changed = False
 
     def validate_token(self, token: str) -> bool:
         return secrets.compare_digest(self.session_token, token)

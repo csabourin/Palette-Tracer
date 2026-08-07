@@ -1,83 +1,139 @@
 """
-SVG Generated Trace Group creation and replacement.
+Generated trace-group creation and replacement (SPEC §10.3, §10.4, §28).
+
+The commit is a single group swap: the new content is built in full, and only
+then does it replace the previous group. A failure part-way leaves the document
+exactly as it was (§24 Stage 13, §34.29).
 """
 
 import uuid
-import inkex
-from palette_trace.document.settings_store import PT_NAMESPACE
 
-def commit_generated_trace_group(
-    svg_root: inkex.SvgDocumentElement,
+import inkex
+
+from palette_trace.settings import PT_NAMESPACE, PT_SCHEMA_VERSION
+
+
+def _pt(name: str) -> str:
+    return f"{{{PT_NAMESPACE}}}{name}"
+
+
+def build_generated_group(
     image_elem: inkex.Image,
     image_uuid: str,
-    scan_results: list[dict],
+    scan_results: list,
     transform_matrix: inkex.Transform,
-    existing_group_id: str = None,
-) -> str:
+    provenance: dict,
+    group_id: str,
+) -> inkex.Group:
     """
-    Creates or atomically updates the generated SVG group for traced scans.
-    Returns the root group ID.
+    Builds the generated root group without attaching it to the document.
+
+    `provenance` carries the §10.3 attributes. The full settings are deliberately
+    *not* duplicated here — they live on the source image (§10.2).
     """
-    parent = image_elem.getparent()
-    if parent is None:
-        parent = svg_root
+    root_group = inkex.Group()
+    root_group.set("id", group_id)
+    root_group.set("inkscape:label", f"Palette Trace — {image_elem.get('id', 'image')}")
+    root_group.set(_pt("generated"), "true")
+    root_group.set(_pt("source-image-uuid"), image_uuid)
+    root_group.set(_pt("schema-version"), str(PT_SCHEMA_VERSION))
+    root_group.set(_pt("settings-hash"), provenance.get("settingsHash", ""))
+    root_group.set(_pt("source-hash"), provenance.get("sourceHash", ""))
+    root_group.set(_pt("backend-id"), provenance.get("backendId", ""))
+    root_group.set(_pt("backend-version"), provenance.get("backendVersion", ""))
 
-    # Search for existing generated group
-    root_group = None
-    if existing_group_id:
-        existing = svg_root.xpath(f'//*[@id="{existing_group_id}"]')
-        if existing:
-            root_group = existing[0]
-
-    if root_group is None:
-        # Create new root group
-        root_id = f"palette-trace-result-{uuid.uuid4().hex[:8]}"
-        root_group = inkex.Group()
-        root_group.set("id", root_id)
-        root_group.set("inkscape:label", f"Palette Trace — {image_elem.get('id', 'image')}")
-        root_group.set(f"{{{PT_NAMESPACE}}}generated", "true")
-        root_group.set(f"{{{PT_NAMESPACE}}}source-image-uuid", image_uuid)
-
-        # Insert immediately above the source image element
-        idx = list(parent).index(image_elem)
-        parent.insert(idx + 1, root_group)
-    else:
-        # Clear existing children for atomic update
-        root_id = root_group.get("id")
-        for child in list(root_group):
-            root_group.remove(child)
-
-    # Populate scan groups
-    for idx, scan in enumerate(scan_results):
-        entry_id = scan["entryId"]
-        name = scan.get("name", f"Scan {idx+1}")
-        hex_color = scan.get("color", "#000000")
-        role = scan.get("role", "primary_fill")
-        path_datas = scan.get("pathDatas", [])
-        fill_rule = scan.get("fillRule", "evenodd")
-
+    for index, scan in enumerate(scan_results):
+        path_datas = [d for d in scan.get("pathDatas", []) if d]
         if not path_datas:
             continue
 
+        hex_color = scan.get("color", "#000000")
+        name = scan.get("name", f"Scan {index + 1}")
+        role = scan.get("role", "primary_fill")
+
         scan_group = inkex.Group()
         scan_group.set("id", f"palette-trace-scan-{uuid.uuid4().hex[:8]}")
-        scan_group.set("inkscape:label", f"{idx+1:02d} {name} — {hex_color}")
-        scan_group.set(f"{{{PT_NAMESPACE}}}palette-entry-id", entry_id)
-        scan_group.set(f"{{{PT_NAMESPACE}}}role", role)
+        scan_group.set("inkscape:label", f"{index + 1:02d} {name} — {hex_color}")
+        scan_group.set(_pt("palette-entry-id"), scan["entryId"])
+        scan_group.set(_pt("role"), role)
+        if scan.get("isBackground"):
+            scan_group.set(_pt("background"), "true")
 
-        for d_str in path_datas:
-            if not d_str:
-                continue
+        for path_data in path_datas:
             path_elem = inkex.PathElement()
-            path_elem.set("d", d_str)
+            path_elem.set("d", path_data)
             path_elem.style["fill"] = hex_color
-            path_elem.style["fill-rule"] = fill_rule
+            path_elem.style["fill-rule"] = scan.get("fillRule", "evenodd")
             path_elem.style["stroke"] = "none"
-
-            # Apply transform matrix to path element or scan group
             path_elem.transform = transform_matrix
             scan_group.append(path_elem)
 
         root_group.append(scan_group)
 
-    return root_id
+    return root_group
+
+
+def find_generated_group(svg_root, group_id: str):
+    """Returns the existing generated group with `group_id`, or None."""
+    if not group_id:
+        return None
+    matches = svg_root.xpath(f'//*[@id="{group_id}"]')
+    return matches[0] if matches else None
+
+
+def commit_generated_trace_group(
+    svg_root: inkex.SvgDocumentElement,
+    image_elem: inkex.Image,
+    image_uuid: str,
+    scan_results: list,
+    transform_matrix: inkex.Transform,
+    existing_group_id: str = None,
+    provenance: dict = None,
+) -> str:
+    """
+    Creates or replaces the generated group, returning its id.
+
+    Replacement is atomic in the sense that matters for §34.29: the replacement
+    group is fully built before the previous one is detached, so an exception
+    during construction cannot leave a half-written result in the document.
+    """
+    parent = image_elem.getparent()
+    if parent is None:
+        parent = svg_root
+
+    existing = find_generated_group(svg_root, existing_group_id)
+    group_id = (
+        existing.get("id") if existing is not None
+        else f"palette-trace-result-{uuid.uuid4().hex[:8]}"
+    )
+
+    new_group = build_generated_group(
+        image_elem, image_uuid, scan_results, transform_matrix,
+        provenance or {}, group_id,
+    )
+
+    if existing is not None:
+        existing_parent = existing.getparent()
+        index = list(existing_parent).index(existing)
+        existing_parent.remove(existing)
+        existing_parent.insert(index, new_group)
+    else:
+        parent.insert(list(parent).index(image_elem) + 1, new_group)
+
+    return group_id
+
+
+def detect_manual_edits(svg_root, group_id: str, expected_settings_hash: str) -> bool:
+    """
+    Whether the generated group looks manually edited (§28, §34.26).
+
+    The recorded settings hash is compared against the group's own attribute.
+    A group whose attribute is missing or stale was either edited by hand or
+    produced by a different configuration, and replacing it would discard work.
+    """
+    group = find_generated_group(svg_root, group_id)
+    if group is None:
+        return False
+
+    stored = group.get(_pt("settings-hash"), "")
+    return bool(expected_settings_hash) and stored != expected_settings_hash
