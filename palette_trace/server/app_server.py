@@ -77,11 +77,14 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
 
-def launch_palette_trace_app(session) -> bool:
+def launch_palette_trace_app(session, open_browser: bool = True) -> bool:
     """
-    Launches local HTTP server on 127.0.0.1:0 and opens user web browser.
-    Blocks until user clicks Apply or Cancel.
-    Returns True if Applied, False if Cancelled.
+    Serves the local interface on 127.0.0.1 and an ephemeral port (§9.1, §31).
+
+    Blocks until the user applies or cancels. Returns True when applied.
+
+    `open_browser` is False for headless runs and for the standalone host's
+    `--no-browser` mode, where the URL is printed instead.
     """
     PaletteTraceRequestHandler.session = session
 
@@ -89,7 +92,10 @@ def launch_palette_trace_app(session) -> bool:
     port = server.server_port
     url = f"http://127.0.0.1:{port}/index.html?token={session.session_token}"
 
-    webbrowser.open(url)
+    if open_browser:
+        webbrowser.open(url)
+    else:
+        print(f"Palette Trace interface: {url}")
 
     # Event loop until Apply or Cancel
     try:

@@ -92,6 +92,43 @@ def srgb_to_oklch(r: float, g: float, b: float) -> tuple[float, float, float]:
     L, a, b_val = srgb_to_oklab(r, g, b)
     return oklab_to_oklch(L, a, b_val)
 
+def srgb_array_to_oklch(srgb: "np.ndarray") -> "np.ndarray":
+    """
+    Vectorized sRGB -> OKLCH for a whole (h, w, 3) float image in 0..1.
+
+    Numerically identical to calling :func:`srgb_to_oklch` per pixel, but the
+    per-pixel Python loop it replaces was O(width x height) interpreter calls and
+    dominated decode time on anything larger than a thumbnail.
+
+    NumPy is required here. Correctness must not depend solely on NumPy (§5), so
+    callers that cannot import it should fall back to the scalar functions.
+    """
+    import numpy as np
+
+    values = np.asarray(srgb, dtype=np.float64)
+    linear = np.where(values <= 0.04045, values / 12.92,
+                      np.power((values + 0.055) / 1.055, 2.4))
+
+    lr, lg, lb = linear[..., 0], linear[..., 1], linear[..., 2]
+
+    l = 0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb
+    m = 0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb
+    s = 0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb
+
+    l_ = np.cbrt(l)
+    m_ = np.cbrt(m)
+    s_ = np.cbrt(s)
+
+    L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_
+    a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_
+    b_val = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757993 * s_
+
+    C = np.sqrt(a * a + b_val * b_val)
+    h = np.degrees(np.arctan2(b_val, a)) % 360.0
+
+    return np.stack([L, C, h], axis=-1)
+
+
 def shortest_hue_distance(h1: float, h2: float) -> float:
     """Calculate shortest circular distance between two hue angles in degrees [0, 180]."""
     diff = abs(h1 - h2) % 360.0

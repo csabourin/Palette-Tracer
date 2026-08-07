@@ -1,256 +1,177 @@
 """
-Comprehensive conformance fixtures for tracing backends (§36, §23).
+Backend conformance tests (SPEC §23.2, §23.6, §33.2, §34.19).
 
-Tests verify:
-- Solid shape reproduction (node count budget)
-- Hole preservation  
-- Determinism under repeated runs
-- Noise suppression
-- Path data structure validity
+The checks themselves live in `palette_trace.tracing.conformance.runner` so that
+pytest and the command-line runner evaluate exactly the same thing. This module
+is the assertion layer.
 
-Conformance thresholds are numeric where possible to enable automated gating.
+Structure mirrors the two tiers in the runner:
+
+* Every discovered backend must pass every **mandatory** check — those are the
+  `MUST` responsibilities of §23.2. A backend failing one should not be
+  registered at all.
+* The **quality** checks decide which backend is fit to be the reference
+  backend (§23.6). Backends are allowed to fail these; at least one must pass
+  them all, and the configured reference backend must be one that does.
 """
 
-import re
-import numpy as np
-from palette_trace.tracing.protocol import TraceRequest, TraceBackend
-from palette_trace.tracing.registry import BackendRegistry
+import pytest
+
+from palette_trace.tracing.conformance.runner import (
+    ConformanceReport,
+    evaluate_all,
+    run_conformance_suite,
+)
+from palette_trace.tracing.registry import REFERENCE_BACKEND_ID, BackendRegistry
+
+MANDATORY_CHECKS = [
+    "capabilities_reporting",
+    "binary_mask_input",
+    "path_data_structure",
+    "hole_preservation",
+    "determinism",
+    "cancellation_signature",
+    "large_mask",
+]
+
+QUALITY_CHECKS = [
+    "node_budget_solid_rectangle",
+    "sharp_corners",
+    "smooth_curves",
+    "noise_suppression",
+    "sparse_noise_suppression",
+    "thin_feature_retention",
+    "node_budget_large_mask",
+    "runtime_large_mask",
+]
+
+
+# Evaluated once — tracing a 512x512 mask per backend is not free.
+_REPORTS: dict[str, ConformanceReport] = {r.backend_id: r for r in evaluate_all()}
+_BACKEND_IDS = sorted(_REPORTS)
+
+
+@pytest.fixture(scope="session")
+def reports() -> dict:
+    return _REPORTS
 
 
 # --------------------------------------------------------------------------- #
-#  Fixture masks                                                              #
+#  Discovery gates (SPEC §23.6, §34.19)                                        #
 # --------------------------------------------------------------------------- #
 
-def create_solid_rectangle_mask(w=64, h=64) -> bytes:
-    """Solid rectangle centred in the frame."""
-    mask = np.zeros((h, w), dtype=np.uint8)
-    mask[12:52, 12:52] = 1
-    return mask.tobytes()
+def test_at_least_two_candidates_are_evaluated():
+    """§23.6 requires the spike to evaluate at least two backend candidates."""
+    assert len(_BACKEND_IDS) >= 2, (
+        f"only {len(_BACKEND_IDS)} backend(s) discovered ({', '.join(_BACKEND_IDS) or 'none'}). "
+        "Install the backend candidates with: pip install -e '.[backends]'"
+    )
 
 
-def create_donut_mask(w=64, h=64) -> bytes:
-    """Ring with a hole in the centre — tests hole preservation."""
-    mask = np.zeros((h, w), dtype=np.uint8)
-    mask[8:56, 8:56] = 1
-    mask[20:44, 20:44] = 0
-    return mask.tobytes()
+def test_a_portable_backend_passes_full_conformance():
+    """§34.19: a portable or cross-platform backend passes conformance tests."""
+    eligible = [bid for bid, r in _REPORTS.items() if r.passed]
+    assert eligible, (
+        "no backend passed every mandatory and quality check. "
+        f"Results: { {bid: (r.mandatory_passed, r.quality_passed) for bid, r in _REPORTS.items()} }"
+    )
 
 
-def create_one_pixel_noise_mask(w=64, h=64) -> bytes:
-    """Single isolated pixel — backend should suppress or produce minimal output."""
-    mask = np.zeros((h, w), dtype=np.uint8)
-    mask[32, 32] = 1
-    return mask.tobytes()
+def test_reference_backend_is_conformance_eligible():
+    """The configured reference backend must be one that actually passes."""
+    report = _REPORTS.get(REFERENCE_BACKEND_ID)
+    assert report is not None, (
+        f"reference backend {REFERENCE_BACKEND_ID!r} was not discovered; "
+        f"available: {', '.join(_BACKEND_IDS) or 'none'}"
+    )
+    failed = [c.name for c in report.checks if not c.passed]
+    assert report.passed, (
+        f"reference backend {REFERENCE_BACKEND_ID!r} failed: {', '.join(failed)}"
+    )
 
 
-def create_sparse_noise_mask(w=64, h=64) -> bytes:
-    """Scattered noise pixels — backend should produce few or no paths."""
-    mask = np.zeros((h, w), dtype=np.uint8)
-    coords = [(10, 10), (50, 50), (32, 10), (10, 50)]
-    for y, x in coords:
-        mask[y, x] = 1
-    return mask.tobytes()
-
-
-def create_diagonal_line_mask(w=64, h=64) -> bytes:
-    """Diagonal line — tests smooth curve handling."""
-    mask = np.zeros((h, w), dtype=np.uint8)
-    for i in range(min(w, h)):
-        mask[i, i] = 1
-    return mask.tobytes()
-
-
-# --------------------------------------------------------------------------- #
-#  Threshold constants                                                        #
-# --------------------------------------------------------------------------- #
-
-MAX_NODE_COUNT_SOLID_RECT = 20       # A simple rect should not explode nodes
-MIN_PATHS_FOR_DONUT = 1             # At least one path expected for donut
-MAX_PATHS_FOR_NOISE = 0             # Single pixel should ideally produce nothing
-DETERMINISM_TOLERANCE = 0.0         # Path tuples must be identical
-
-
-# --------------------------------------------------------------------------- #
-#  Conformance test class                                                     #
-# --------------------------------------------------------------------------- #
-
-class BackendConformance:
-    """Runs a suite of conformance checks against a TraceBackend."""
-
-    def __init__(self, backend: TraceBackend):
-        self.backend = backend
-        self.results: dict[str, bool] = {}
-        self.details: dict[str, str] = {}
-
-    # -- individual tests --------------------------------------------------- #
-
-    def test_solid_rectangle(self) -> bool:
-        """Solid rectangle must produce at least one path with reasonable node count."""
-        mask_bytes = create_solid_rectangle_mask()
-        req = TraceRequest(width=64, height=64, packed_binary_mask=mask_bytes, profile={})
-        res = self.backend.trace_mask(req)
-
-        has_paths = len(res.svg_path_data) >= 1
-        if not has_paths:
-            self.details["solid_rectangle"] = "No paths produced"
-            return False
-
-        # Check statistics for node count if available
-        stats = res.statistics.get("path_count", 0)
-        if stats > MAX_NODE_COUNT_SOLID_RECT:
-            self.details["solid_rectangle"] = f"Too many paths: {stats}"
-            return False
-
-        self.details["solid_rectangle"] = f"{len(res.svg_path_data)} path(s)"
-        return True
-
-    def test_donut_hole_preservation(self) -> bool:
-        """Donut shape must produce at least one path (hole may be implicit via fill-rule)."""
-        mask_bytes = create_donut_mask()
-        req = TraceRequest(width=64, height=64, packed_binary_mask=mask_bytes, profile={})
-        res = self.backend.trace_mask(req)
-
-        has_paths = len(res.svg_path_data) >= MIN_PATHS_FOR_DONUT
-        if not has_paths:
-            self.details["donut_hole"] = "No paths produced for donut"
-            return False
-
-        self.details["donut_hole"] = f"{len(res.svg_path_data)} path(s), fill_rule={res.fill_rule}"
-        return True
-
-    def test_determinism(self) -> bool:
-        """Identical input must produce identical output."""
-        mask_bytes = create_donut_mask()
-        req = TraceRequest(width=64, height=64, packed_binary_mask=mask_bytes, profile={})
-
-        res1 = self.backend.trace_mask(req)
-        res2 = self.backend.trace_mask(req)
-
-        is_deterministic = res1.svg_path_data == res2.svg_path_data
-        if not is_deterministic:
-            self.details["determinism"] = "Outputs differ between runs"
-        else:
-            self.details["determinism"] = "Deterministic ✓"
-        return is_deterministic
-
-    def test_noise_suppression(self) -> bool:
-        """Single isolated pixel should produce no paths."""
-        mask_bytes = create_one_pixel_noise_mask()
-        req = TraceRequest(width=64, height=64, packed_binary_mask=mask_bytes, profile={})
-        res = self.backend.trace_mask(req)
-
-        suppressed = len(res.svg_path_data) <= MAX_PATHS_FOR_NOISE
-        if not suppressed:
-            self.details["noise_suppression"] = f"Produced {len(res.svg_path_data)} path(s) for single pixel"
-        else:
-            self.details["noise_suppression"] = "Noise suppressed ✓"
-        return suppressed
-
-    def test_sparse_noise_suppression(self) -> bool:
-        """Sparse noise should produce minimal output."""
-        mask_bytes = create_sparse_noise_mask()
-        req = TraceRequest(width=64, height=64, packed_binary_mask=mask_bytes, profile={})
-        res = self.backend.trace_mask(req)
-
-        # Allow up to 1 path for sparse noise (some backends may merge nearby pixels)
-        minimal = len(res.svg_path_data) <= 2
-        if not minimal:
-            self.details["sparse_noise"] = f"Produced {len(res.svg_path_data)} paths for sparse noise"
-        else:
-            self.details["sparse_noise"] = "Sparse noise handled ✓"
-        return minimal
-
-    def test_capabilities_reporting(self) -> bool:
-        """Backend must report valid capabilities."""
-        caps = self.backend.capabilities()
-        
-        required_fields = ["backend_id", "version", "supports_binary_masks", 
-                          "supports_holes", "deterministic"]
-        for field in required_fields:
-            if not hasattr(caps, field):
-                self.details["capabilities"] = f"Missing capability: {field}"
-                return False
-
-        if not caps.backend_id:
-            self.details["capabilities"] = "backend_id is empty"
-            return False
-
-        self.details["capabilities"] = f"id={caps.backend_id}, v{caps.version}"
-        return True
-
-    def test_path_data_structure(self) -> bool:
-        """Path data must be non-empty strings."""
-        mask_bytes = create_solid_rectangle_mask()
-        req = TraceRequest(width=64, height=64, packed_binary_mask=mask_bytes, profile={})
-        res = self.backend.trace_mask(req)
-
-        for i, path in enumerate(res.svg_path_data):
-            if not isinstance(path, str):
-                self.details["path_structure"] = f"Path {i} is not a string"
-                return False
-            # Each path should contain at least one command letter
-            has_command = bool(re.search(r'[MZLHVCSQTA]', path))
-            if not has_command:
-                self.details["path_structure"] = f"Path {i} has no valid SVG commands"
-                return False
-
-        self.details["path_structure"] = "All paths structurally valid ✓"
-        return True
-
-    # -- aggregate ----------------------------------------------------------- #
-
-    def run_all(self) -> dict:
-        """Execute all conformance tests and return results."""
-        test_methods = [
-            ("capabilities_reporting", self.test_capabilities_reporting),
-            ("solid_rectangle", self.test_solid_rectangle),
-            ("donut_hole_preservation", self.test_donut_hole_preservation),
-            ("determinism", self.test_determinism),
-            ("noise_suppression", self.test_noise_suppression),
-            ("sparse_noise_suppression", self.test_sparse_noise_suppression),
-            ("path_data_structure", self.test_path_data_structure),
-        ]
-
-        for name, method in test_methods:
-            try:
-                self.results[name] = method()
-            except Exception as exc:
-                self.results[name] = False
-                self.details[name] = f"Exception: {exc}"
-
-        overall_passed = all(self.results.values())
-        return {
-            "backend_id": self.backend.capabilities().backend_id,
-            "version": self.backend.capabilities().version,
-            "passed": overall_passed,
-            "results": self.results,
-            "details": self.details,
-        }
-
-
-def main():
-    """Standalone runner when pytest is unavailable."""
+def test_registry_prefers_the_reference_backend():
+    """§23.3/§23.4: automatic selection must resolve to the reference backend."""
     registry = BackendRegistry()
-    available = registry.list_available_backends()
-    
-    print(f"Discovered {len(available)} tracing backends.\n")
-
-    for info in available:
-        bid = info["id"]
-        try:
-            backend = registry.get_backend(bid)
-            conf = BackendConformance(backend)
-            res = conf.run_all()
-            
-            status = "PASSED ✓" if res["passed"] else "FAILED ✗"
-            print(f"Backend '{bid}' ({res['version']}): {status}")
-            for tname, tok in res["results"].items():
-                symbol = "✓" if tok else "✗"
-                detail = res["details"].get(tname, "")
-                print(f"  [{symbol}] {tname}: {detail}")
-        except Exception as exc:
-            print(f"Backend '{bid}': ERROR — {exc}\n")
+    assert registry.get_backend("auto").capabilities().backend_id == REFERENCE_BACKEND_ID
 
 
-if __name__ == "__main__":
-    main()
+def test_explicit_backend_selection_is_honoured():
+    """§23.3 item 1: an explicitly selected backend wins over the priority order."""
+    registry = BackendRegistry()
+    for backend_id in _BACKEND_IDS:
+        assert registry.get_backend(backend_id).capabilities().backend_id == backend_id
+
+
+# --------------------------------------------------------------------------- #
+#  Mandatory checks — every backend (SPEC §23.2)                               #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("backend_id", _BACKEND_IDS)
+@pytest.mark.parametrize("check_name", MANDATORY_CHECKS)
+def test_mandatory_check(backend_id, check_name, reports):
+    report = reports[backend_id]
+    assert report.error is None, f"{backend_id} raised during evaluation: {report.error}"
+    check = report.get(check_name)
+    assert check.passed, f"{backend_id} failed {check_name}: {check.detail}"
+
+
+@pytest.mark.parametrize("backend_id", _BACKEND_IDS)
+def test_every_check_was_evaluated(backend_id, reports):
+    """Guards against a check silently disappearing from the runner."""
+    evaluated = {c.name for c in reports[backend_id].checks}
+    missing = set(MANDATORY_CHECKS + QUALITY_CHECKS) - evaluated
+    assert not missing, f"{backend_id} did not evaluate: {', '.join(sorted(missing))}"
+
+
+# --------------------------------------------------------------------------- #
+#  Quality checks — reference backend only (SPEC §23.6)                        #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("check_name", QUALITY_CHECKS)
+def test_reference_backend_quality_check(check_name, reports):
+    report = reports.get(REFERENCE_BACKEND_ID)
+    if report is None:
+        pytest.fail(f"reference backend {REFERENCE_BACKEND_ID!r} was not discovered")
+    check = report.get(check_name)
+    assert check.passed, f"{REFERENCE_BACKEND_ID} failed {check_name}: {check.detail}"
+
+
+# --------------------------------------------------------------------------- #
+#  Regression guards for defects found during the Phase 0 spike                #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("backend_id", _BACKEND_IDS)
+def test_solid_shape_does_not_produce_a_full_frame_path(backend_id):
+    """
+    Regression: PotraceAdapter passed the mask to potrace without inverting it.
+    Potrace treats samples *below* blacklevel as foreground, so the background
+    was traced and every scan gained a path covering the whole image.
+    """
+    import numpy as np
+
+    from palette_trace.tracing.conformance import fixtures
+
+    registry = BackendRegistry()
+    backend = registry.get_backend(backend_id)
+
+    mask = fixtures.solid_rectangle()
+    height, width = mask.shape
+    result = backend.trace_mask(fixtures.as_request(mask))
+
+    numbers = []
+    for path in result.svg_path_data:
+        numbers.extend(float(t) for t in __import__("re").findall(
+            r"-?\d+(?:\.\d+)?", path))
+    assert numbers, f"{backend_id} produced no coordinates for a solid rectangle"
+
+    # The fixture inset is a fifth of each edge, so a correctly traced rectangle
+    # never reaches the frame corners.
+    touches_frame = (
+        min(numbers) <= 0.5
+        and max(numbers) >= min(width, height) - 0.5
+    )
+    assert not touches_frame, (
+        f"{backend_id} traced geometry spanning the full {width}x{height} frame for an "
+        "inset rectangle — the mask polarity is probably inverted"
+    )

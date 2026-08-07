@@ -105,6 +105,8 @@ Calling another Inkscape process through `inkex.command` is resource-intensive a
 
 The extension MAY store arbitrary namespaced attributes on SVG elements. Palette Trace will use this to store image-specific settings directly on the selected `<image>` element.
 
+Because the interface is a local web application rather than an INX form, almost none of the product depends on Inkscape being present. Inkscape supplies a document and a selected bitmap; everything the user interacts with is served by the extension process itself. Palette Trace therefore treats Inkscape as one host among two, and also runs as a standalone local web application over image files on disk. §9.4 defines the host contract that keeps both honest.
+
 Pillow is part of the documented `inkex` dependency set, while NumPy is also declared by the project. Palette Trace SHOULD use Pillow for decoding and MAY use NumPy for acceleration, but correctness MUST NOT depend solely on NumPy being available.
 
 VTracer is one possible third-party backend candidate because its project supports raster-to-SVG conversion, binary tracing, Python integration and a pluggable pipeline. It is a candidate, not a required dependency.
@@ -473,6 +475,88 @@ Colour reach: Narrow
 
 The selected colour’s claim overlay MUST update immediately.
 
+## 9.4 Application hosts
+
+The local interface described in §9.1 is the whole of the user experience. Inkscape supplies a document, a selected bitmap and a place to write the result; it does not supply the interface. Palette Trace therefore MUST be structured so that Inkscape is one *host* rather than a precondition, and MUST support two hosts:
+
+* the **Inkscape extension host**, which reads and writes an open SVG document; and
+* the **standalone host**, which reads an image file from disk and writes an SVG file.
+
+Both hosts MUST drive the same headless core and the same local interface. Identical inputs MUST produce identical geometry in either host (§34.30).
+
+### 9.4.1 Host contract
+
+A host is responsible for exactly four things:
+
+1. Supplying one decoded source bitmap.
+2. Loading and persisting image settings conforming to §11.
+3. Committing the generated result.
+4. Reporting errors without destroying user data.
+
+A host MUST NOT reimplement palette logic, claim resolution, quantization, mask cleanup, geometry policy or tracing.
+
+The following MUST hold for the shared modules:
+
+* The headless core MUST NOT import `inkex`.
+* Modules that import `inkex` MUST be confined to the Inkscape host.
+* `inkex` MUST be an optional dependency, required only for the Inkscape host.
+
+### 9.4.2 Standalone host requirements
+
+The standalone host MUST:
+
+* Accept one local image path.
+* Serve the same local interface under the same §9.1 and §31 constraints.
+* Open the interface in the user's browser.
+* Write a standalone SVG document on Apply.
+* Exit after Apply, Cancel or inactivity timeout.
+* Function with no Inkscape installation present.
+
+The standalone host MUST NOT:
+
+* Accept a remote URL as a source.
+* Serve any file outside its bundled interface assets and the selected source image.
+* Write outside the user-specified output path.
+
+### 9.4.3 Standalone persistence
+
+The Inkscape host stores settings on the source `<image>` element (§10.2) so that deleting the image deletes its settings (§34.23). A standalone host has no document to store them in, and MUST instead write a sidecar file beside the source image:
+
+```text
+<source image path>.palettetrace.json
+```
+
+The sidecar MUST contain the same §11 image-settings object that `pt:settings` would contain.
+
+The sidecar MUST be treated as advisory: a missing, unreadable or wrong-version sidecar MUST fall back to destination defaults rather than failing.
+
+Deleting the source image does not delete the sidecar. The standalone host MUST tolerate an orphaned sidecar and SHOULD ignore one whose recorded fingerprint cannot be reconciled with any source.
+
+### 9.4.4 Standalone output
+
+Generated SVG MUST:
+
+* Contain the same group structure, labels and `pt:` attributes defined in §10.3 and §10.4.
+* Declare the `pt` namespace on the root element.
+* Use a `viewBox` matching the intrinsic source dimensions.
+* Embed no raster data unless the user explicitly requests that the source be included.
+* Be written atomically — written to a temporary file in the destination directory and then moved into place — so an interrupted run cannot leave a truncated SVG (§34.29).
+
+The standalone host MUST NOT overwrite an existing output file without an explicit instruction.
+
+### 9.4.5 Host parity
+
+Where a requirement in this specification refers to the SVG document, the source `<image>` element or the generated group, the standalone host MUST satisfy the equivalent obligation against its own source file, sidecar and output file. Specifically:
+
+| Requirement | Inkscape host | Standalone host |
+| ----------- | ------------- | --------------- |
+| §34.1 Open one selected bitmap | Selected `<image>` in the document | Image path given on the command line |
+| §34.2 Restore stored settings | `pt:settings` on the image | Sidecar file |
+| §34.22 Settings stored on the source | On the `<image>` element | Sidecar beside the image |
+| §34.23 Deleting the image deletes its settings | Inherent — settings are an attribute | Not applicable; the sidecar is separate and orphans MUST be tolerated |
+| §34.25 Replace the linked generated group | Replace the group in place | Rewrite the output SVG |
+| §34.29 Errors do not corrupt the document | Group swap after successful build | Atomic file replace |
+
 ---
 
 # 10. Data persistence model
@@ -559,6 +643,14 @@ The outer result group SHOULD be inserted immediately above the source image in 
 The source image MUST remain unchanged unless the user explicitly selects **Hide source image after tracing**.
 
 Deleting the source image MUST NOT automatically delete generated vectors. The generated vectors then become ordinary, non-retraceable artwork.
+
+## 10.5 Standalone sidecar
+
+When running under the standalone host, the settings object defined in §11 is stored in the sidecar file described in §9.4.3 instead of in `pt:settings`.
+
+The sidecar MUST be a single JSON object with the same fields, and MUST NOT introduce a parallel schema. `schemaVersion` and the validation rules in §12 apply unchanged.
+
+The `pt:` attributes in §10.3 remain required on the generated group in both hosts, because they describe the generated result rather than the host.
 
 ---
 
@@ -2060,7 +2152,7 @@ palette-trace/
 ├── CONTRIBUTING.md
 ├── THIRD_PARTY_NOTICES.md
 ├── palette_trace.inx
-├── palette_trace.py
+├── palette_trace.py          # Inkscape host entry point
 ├── pyproject.toml
 ├── schemas/
 │   ├── image-settings-v1.schema.json
@@ -2068,12 +2160,16 @@ palette-trace/
 ├── palette_trace/
 │   ├── __init__.py
 │   ├── extension.py
+│   ├── standalone.py         # standalone host entry point (§9.4)
+│   ├── settings.py           # host-neutral settings schema (§11)
 │   ├── errors.py
 │   ├── diagnostics.py
 │   ├── capabilities.py
-│   ├── document/
+│   ├── svg_writer.py         # standalone SVG assembly (§9.4.4)
+│   ├── sidecar.py            # standalone settings persistence (§9.4.3)
+│   ├── image_source.py       # decoding, EXIF, OKLCH, fingerprint — host-neutral
+│   ├── document/             # Inkscape host only — the sole `inkex` consumer
 │   │   ├── selection.py
-│   │   ├── image_source.py
 │   │   ├── transforms.py
 │   │   ├── settings_store.py
 │   │   ├── generated_groups.py
@@ -2243,7 +2339,9 @@ CI SHOULD test:
 
 # 34. MVP acceptance criteria
 
-The MVP is viable only when all of the following work:
+The MVP is viable only when all of the following work.
+
+Criteria are written in the vocabulary of the Inkscape host. Where a criterion names the document, the source `<image>` or the generated group, the standalone host satisfies the equivalent obligation defined in §9.4.5. Every criterion applies to both hosts except §34.23, which is inherent to attribute storage and is explicitly not applicable to the standalone host.
 
 1. One selected embedded or linked local bitmap can be opened.
 2. The interface restores settings stored on that image.
@@ -2352,6 +2450,9 @@ Deliver:
 * Per-scan profiles.
 * Destination controls.
 * Cancel and Apply.
+* Standalone host: command-line entry point, sidecar persistence, SVG export (§9.4).
+
+Phase 2 delivers a product that is usable on its own. The standalone host belongs here rather than later because it depends only on the headless core and the local interface, both of which this phase produces. Building it now also enforces the §9.4.1 rule that the core never imports `inkex`, which is far cheaper to maintain than to retrofit.
 
 ## Phase 3: Inkscape integration
 

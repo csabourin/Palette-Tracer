@@ -11,6 +11,17 @@ from palette_trace.tracing.backends.autotrace_adapter import AutoTraceAdapter
 from palette_trace.tracing.backends.inkscape_cli_adapter import InkscapeCliAdapter
 from palette_trace.errors import BackendNotFoundError
 
+#: Reference backend selected by the Phase 0 engine spike (§23.6).
+#: See docs/decisions/ADR-0001-reference-tracing-backend.md for the measured
+#: conformance evidence behind this choice. Changing it requires re-running
+#: `python -m palette_trace.tracing.conformance.runner` and updating that record.
+REFERENCE_BACKEND_ID = "potrace"
+
+#: Automatic-selection order (§23.3). Portable Python bindings come before
+#: compiled-wheel engines, which come before the correctness-only fallback.
+BACKEND_PRIORITY = ("potrace", "vtracer", "autotrace", "inkscape_cli", "python_contour")
+
+
 class BackendRegistry:
     """Manages discovery and instantiation of tracing backend adapters."""
 
@@ -45,8 +56,7 @@ class BackendRegistry:
         if preferred_id != "auto" and preferred_id in self._backends:
             return self._backends[preferred_id]
 
-        # Priority selection: potrace -> vtracer -> python_contour
-        for candidate in ["potrace", "vtracer", "python_contour"]:
+        for candidate in BACKEND_PRIORITY:
             if candidate in self._backends:
                 return self._backends[candidate]
 

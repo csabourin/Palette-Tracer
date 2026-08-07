@@ -8,7 +8,7 @@ import hashlib
 import numpy as np
 from PIL import Image, ImageOps
 from palette_trace.errors import ImageSourceError
-from palette_trace.color.conversion import srgb_to_oklch
+from palette_trace.color.conversion import srgb_array_to_oklch
 
 class DecodedImageSource:
     """Encapsulates decoded raster data, dimensions, and content fingerprint."""
@@ -31,16 +31,10 @@ class DecodedImageSource:
         self.srgb = self.rgba_data[:, :, :3].astype(np.float32) / 255.0
         self.alpha = self.rgba_data[:, :, 3].astype(np.float32) / 255.0
 
-        # Compute precalculated OKLCH representation
-        r = self.srgb[:, :, 0]
-        g = self.srgb[:, :, 1]
-        b = self.srgb[:, :, 2]
-
-        # Vectorized sRGB to OKLCH
-        self.oklch = np.zeros((self.intrinsic_height, self.intrinsic_width, 3), dtype=np.float32)
-        for y in range(self.intrinsic_height):
-            for x in range(self.intrinsic_width):
-                self.oklch[y, x] = srgb_to_oklch(r[y, x], g[y, x], b[y, x])
+        # Precomputed OKLCH working representation (§21.1). Vectorized — the
+        # per-pixel Python loop this replaces cost one interpreter call per
+        # pixel and dominated decode time.
+        self.oklch = srgb_array_to_oklch(self.srgb).astype(np.float32)
 
         # Calculate SHA-256 fingerprint
         hasher = hashlib.sha256()

@@ -54,8 +54,10 @@ class PotraceAdapter(TraceBackend):
             (request.height, request.width)
         )
 
-        # Potrace bitmap expects boolean or uint32 matrix
-        bmp = potrace.Bitmap(mask_arr > 0)
+        # Potrace treats samples BELOW blacklevel (default 0.5) as foreground, so the
+        # mask must be inverted: selected pixels become 0, unselected become 1.
+        # Passing the mask directly traces the background and yields a full-frame path.
+        bmp = potrace.Bitmap(mask_arr == 0)
 
         # Map profile options
         profile = request.profile or {}
