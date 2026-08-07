@@ -82,3 +82,10 @@ docs/_build/
 
 # Debuggers
 .debugpy
+
+# Replit workspace build cache — this repo has no Node/TypeScript/Vite
+# toolchain of its own; these appear when a Replit workspace process touches
+# the checkout and are never meant to be committed.
+artifacts/
+*.tsbuildinfo
+.vite/
