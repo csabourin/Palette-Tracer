@@ -10,6 +10,7 @@ deliberately absent from the imports below.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -71,7 +72,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--ignore-sidecar", action="store_true",
         help="start from destination defaults, ignoring any saved settings",
     )
+    parser.add_argument(
+        "--host",
+        help="interface bind address (default: 127.0.0.1, or 0.0.0.0 when a "
+             "PORT environment variable is set, e.g. under Replit)",
+    )
+    parser.add_argument(
+        "--port", type=int,
+        help="interface port (default: an ephemeral port, or $PORT when set)",
+    )
     return parser
+
+
+def _default_host_and_port(args: argparse.Namespace) -> tuple[str, int]:
+    """
+    §9.1 requires binding only to loopback by default. `$PORT` is how
+    container platforms such as Replit assign the single externally-reachable
+    port, and its presence has no other plausible reading than "this process
+    is not running on the user's own desktop" — so its presence, and only its
+    presence, opts into the wider bind address needed to be reachable there.
+    """
+    env_port = os.environ.get("PORT")
+    host = args.host or ("0.0.0.0" if env_port else "127.0.0.1")
+    port = args.port if args.port is not None else int(env_port) if env_port else 0
+    return host, port
 
 
 def main(argv=None) -> int:
@@ -133,7 +157,10 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
 
-    if not launch_palette_trace_app(session, open_browser=not args.no_browser):
+    host, port = _default_host_and_port(args)
+    if not launch_palette_trace_app(
+        session, open_browser=not args.no_browser, host=host, port=port
+    ):
         print("Cancelled. Nothing was written.")
         return 0
 

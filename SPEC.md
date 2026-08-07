@@ -760,11 +760,17 @@ interface PaletteEntry {
       }
     | {
         mode: "preset";
-        presetId: TraceProfilePresetId;
+        profileId: TraceProfilePresetId;
       }
     | {
-        mode: "custom";
-        profile: TraceProfile;
+        mode: "override";
+        // Rebases onto a named preset before merging, or onto the document's
+        // global profile when omitted (§18).
+        profileId?: TraceProfilePresetId;
+        // A *partial* profile: only the mask/vector keys present here are
+        // replaced over the base. See §18 for why this is a merge, not a
+        // full replacement.
+        values: Partial<TraceProfile>;
       };
 
   operation?: OperationRole;
@@ -1273,6 +1279,28 @@ Per-scan offsets MUST be disabled or clearly warned in exclusive-layer mode beca
 ---
 
 # 18. Trace profiles
+
+A per-entry `traceProfile` has three modes: `inherit`, `preset` (naming a
+built-in profile by `profileId`), and `override`. `override` merges an
+explicit `values` object over a base profile — the document's global profile
+by default, or a named preset when `profileId` is also given — replacing only
+the mask/vector keys the user actually touched.
+
+This is a *partial* merge, not a full-profile replacement, and the field is
+named `override` rather than `custom` for that reason: a mode called `custom`
+that required restating every one of the twelve `TraceProfile` fields would
+be worse UI (the editor would need to force a value onto every field, not
+just the ones a user actually wants to change) and worse for forward
+compatibility (a future field added to `TraceProfile` would silently vanish
+from every entry that had already gone fully custom, instead of inheriting
+the new default the way an untouched field does today). `profileId` replaces
+the earlier `presetId` name so the same field name is used in both the
+`preset` and `override` branches, which name the same kind of value. The
+granularity of what a user can override is every individual field the
+`TraceProfile` type defines (`palette_trace/presets/profiles.py::merge_profiles`
+merges key-by-key within `mask` and `vector`), not a section-level or
+profile-level choice — the per-entry override editor exposes the same field
+set as the global profile editor for exactly that reason.
 
 Trace-profile definitions MUST live in versioned data files.
 

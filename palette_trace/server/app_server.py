@@ -49,8 +49,19 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body_bytes)
 
     def _serve_static_file(self, req_path: str):
-        rel_path = req_path.lstrip("/").split("?")[0]
+        path_only, _, query = req_path.partition("?")
+        rel_path = path_only.lstrip("/")
         if not rel_path or rel_path == "index.html":
+            if "token=" not in query and self.session is not None:
+                # Convenience redirect so a bare `/` (e.g. a Replit webview
+                # that has no way to know the session token) still lands on
+                # an authenticated page. Purely a UX nicety: /api/* still
+                # requires the token header regardless of how index.html was
+                # reached, so this does not widen what §9.1 protects.
+                self.send_response(302)
+                self.send_header("Location", f"/index.html?token={self.session.session_token}")
+                self.end_headers()
+                return
             target_path = WEB_DIR / "index.html"
             content_type = "text/html"
         elif rel_path == "app.js":
@@ -77,9 +88,18 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
 
-def launch_palette_trace_app(session, open_browser: bool = True) -> bool:
+def launch_palette_trace_app(
+    session, open_browser: bool = True, host: str = "127.0.0.1", port: int = 0
+) -> bool:
     """
-    Serves the local interface on 127.0.0.1 and an ephemeral port (§9.1, §31).
+    Serves the local interface (§9.1, §31).
+
+    §9.1 requires binding only to 127.0.0.1 or ::1 on an ephemeral port, and
+    that remains the default for every caller that does not pass `host`/
+    `port` explicitly. The standalone CLI's `--host`/`--port` flags (and its
+    `PORT`-env-var detection for running under a container platform such as
+    Replit, where the desktop loopback assumption does not hold) are the only
+    callers that widen this, and only when a caller opts in explicitly.
 
     Blocks until the user applies or cancels. Returns True when applied.
 
@@ -88,9 +108,10 @@ def launch_palette_trace_app(session, open_browser: bool = True) -> bool:
     """
     PaletteTraceRequestHandler.session = session
 
-    server = HTTPServer(("127.0.0.1", 0), PaletteTraceRequestHandler)
-    port = server.server_port
-    url = f"http://127.0.0.1:{port}/index.html?token={session.session_token}"
+    server = HTTPServer((host, port), PaletteTraceRequestHandler)
+    bound_port = server.server_port
+    display_host = host if host not in ("0.0.0.0", "::") else "127.0.0.1"
+    url = f"http://{display_host}:{bound_port}/index.html?token={session.session_token}"
 
     if open_browser:
         webbrowser.open(url)
