@@ -1,0 +1,14 @@
+run = "bash scripts/replit_run.sh"
+entrypoint = "palette_trace/standalone.py"
+modules = ["python-3.12"]
+
+[nix]
+channel = "stable-24_05"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[env]
+PYTHONUNBUFFERED = "1"
+PORT = "8080"

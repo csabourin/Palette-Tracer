@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "profiles": {
+    "default": {
+      "mask": {
+        "minimumRegionAreaPx2": 4,
+        "fillHolesAreaPx2": 4,
+        "closeGapsRadiusPx": 1,
+        "smoothingRadiusPx": 0.5,
+        "preserveThinFeatures": true,
+        "minimumFeatureWidthPx": 1,
+        "offsetPx": 0
+      },
+      "vector": {
+        "cornerSensitivity": 0.65,
+        "curveSmoothing": 0.50,
+        "optimization": 0.20,
+        "requireClosedPaths": false,
+        "minimumPathAreaPx2": 1
+      }
+    },
+    "smooth_shapes": {
+      "mask": {
+        "minimumRegionAreaPx2": 8,
+        "fillHolesAreaPx2": 8,
+        "closeGapsRadiusPx": 2,
+        "smoothingRadiusPx": 1.2,
+        "preserveThinFeatures": false,
+        "minimumFeatureWidthPx": 2,
+        "offsetPx": 0
+      },
+      "vector": {
+        "cornerSensitivity": 0.35,
+        "curveSmoothing": 0.80,
+        "optimization": 0.65,
+        "requireClosedPaths": false,
+        "minimumPathAreaPx2": 2
+      }
+    },
+    "sharp_details": {
+      "mask": {
+        "minimumRegionAreaPx2": 12,
+        "fillHolesAreaPx2": 2,
+        "closeGapsRadiusPx": 0,
+        "smoothingRadiusPx": 0.2,
+        "preserveThinFeatures": true,
+        "minimumFeatureWidthPx": 1,
+        "offsetPx": 0
+      },
+      "vector": {
+        "cornerSensitivity": 0.90,
+        "curveSmoothing": 0.15,
+        "optimization": 0.15,
+        "requireClosedPaths": false,
+        "minimumPathAreaPx2": 1
+      }
+    },
+    "thin_line_art": {
+      "mask": {
+        "minimumRegionAreaPx2": 2,
+        "fillHolesAreaPx2": 1,
+        "closeGapsRadiusPx": 1,
+        "smoothingRadiusPx": 0.3,
+        "preserveThinFeatures": true,
+        "minimumFeatureWidthPx": 1,
+        "offsetPx": 0
+      },
+      "vector": {
+        "cornerSensitivity": 0.85,
+        "curveSmoothing": 0.40,
+        "optimization": 0.25,
+        "requireClosedPaths": false,
+        "minimumPathAreaPx2": 1
+      }
+    },
+    "small_accents": {
+      "mask": {
+        "minimumRegionAreaPx2": 1,
+        "fillHolesAreaPx2": 0,
+        "closeGapsRadiusPx": 0,
+        "smoothingRadiusPx": 0.15,
+        "preserveThinFeatures": true,
+        "minimumFeatureWidthPx": 1,
+        "offsetPx": 0
+      },
+      "vector": {
+        "cornerSensitivity": 0.80,
+        "curveSmoothing": 0.20,
+        "optimization": 0.10,
+        "requireClosedPaths": false,
+        "minimumPathAreaPx2": 1
+      }
+    },
+    "simplified_background": {
+      "mask": {
+        "minimumRegionAreaPx2": 64,
+        "fillHolesAreaPx2": 32,
+        "closeGapsRadiusPx": 3,
+        "smoothingRadiusPx": 1.5,
+        "preserveThinFeatures": false,
+        "minimumFeatureWidthPx": 3,
+        "offsetPx": 0
+      },
+      "vector": {
+        "cornerSensitivity": 0.25,
+        "curveSmoothing": 0.90,
+        "optimization": 0.80,
+        "requireClosedPaths": false,
+        "minimumPathAreaPx2": 4
+      }
+    },
+    "fabrication_clean": {
+      "mask": {
+        "minimumRegionAreaPx2": 16,
+        "fillHolesAreaPx2": 16,
+        "closeGapsRadiusPx": 1,
+        "smoothingRadiusPx": 0.4,
+        "preserveThinFeatures": false,
+        "minimumFeatureWidthPx": 2,
+        "offsetPx": 0
+      },
+      "vector": {
+        "cornerSensitivity": 0.75,
+        "curveSmoothing": 0.35,
+        "optimization": 0.60,
+        "requireClosedPaths": true,
+        "minimumPathAreaPx2": 4
+      }
+    }
+  }
+}
