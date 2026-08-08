@@ -4,6 +4,11 @@ modules = ["python-3.12"]
 
 [nix]
 channel = "stable-24_05"
+packages = ["libxcrypt", "pkg-config", "xsimd"]
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
 
 [[ports]]
 localPort = 8080
@@ -12,3 +17,27 @@ externalPort = 80
 [env]
 PYTHONUNBUFFERED = "1"
 PORT = "8080"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Palette Trace Web"
+
+[[workflows.workflow]]
+name = "Palette Trace Web"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=8000 .pythonlibs/bin/python3 -m palette_trace.standalone --no-browser"
+waitForPort = 8000
+
+[workflows.workflow.metadata]
+outputType = "webview"
