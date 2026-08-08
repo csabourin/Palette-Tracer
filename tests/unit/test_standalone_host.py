@@ -222,9 +222,15 @@ class TestCommandLine:
     def test_default_output_path_is_derived_from_the_image(self, tmp_path):
         assert default_output_path(tmp_path / "photo.png").name == "photo.palette-trace.svg"
 
-    def test_image_argument_is_required(self):
-        with pytest.raises(SystemExit):
-            build_parser().parse_args([])
+    def test_image_argument_is_optional(self):
+        """
+        §9.4.2: omitting the path opens the interface's image-loading screen.
+
+        Requiring a path on the command line makes the standalone host
+        unusable from a device that has no shell and no access to the server's
+        filesystem, which is every phone.
+        """
+        assert build_parser().parse_args([]).image is None
 
     def test_output_and_flags_parse(self, tmp_path):
         args = build_parser().parse_args(
@@ -254,6 +260,83 @@ class TestCommandLine:
         assert (source.intrinsic_width, source.intrinsic_height) == (20, 20)
         assert source.fingerprint
         assert source.oklch.shape == (20, 20, 3)
+
+
+# --------------------------------------------------------------------------- #
+#  §9.4.2 starting with no image                                               #
+# --------------------------------------------------------------------------- #
+
+class TestStartingWithoutAnImage:
+    """
+    A host launched with no path serves the interface's loading screen, and
+    delivers whatever the user then traces as a download.
+    """
+
+    @pytest.fixture
+    def captured_session(self, monkeypatch):
+        """Runs `main` without actually serving, capturing the session built."""
+        from palette_trace import standalone
+
+        captured = {}
+
+        def fake_launch(session, **kwargs):
+            captured["session"] = session
+            return session.is_applied
+
+        monkeypatch.setattr(standalone, "launch_palette_trace_app", fake_launch)
+        return captured
+
+    def test_no_path_serves_a_session_with_no_image(self, captured_session, capsys):
+        from palette_trace.standalone import main
+
+        assert main(["--no-browser"]) == 0
+
+        session = captured_session["session"]
+        assert session.has_image is False
+        assert session.settings["schemaVersion"] == 1
+        assert session.commit_target == "download"
+        assert session.can_load_image is True
+
+    def test_no_path_writes_nothing_to_disk(self, captured_session, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from palette_trace.standalone import main
+
+        main(["--no-browser"])
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_path_still_binds_the_session_to_that_file(self, captured_session, image_file):
+        from palette_trace.standalone import main
+
+        main([str(image_file), "--no-browser"])
+
+        session = captured_session["session"]
+        assert session.image_name == "sample.png"
+        assert session.output_path == default_output_path(image_file)
+        assert session.commit_target == "file"
+
+    def test_swapping_the_image_in_the_browser_leaves_the_named_output_alone(
+        self, captured_session, image_file, monkeypatch, capsys
+    ):
+        """
+        The command line named one picture; the user traced a different one.
+        Writing the result to the first picture's output path would overwrite
+        an unrelated file (§9.4.4).
+        """
+        from palette_trace import standalone
+        from palette_trace.server.session import ORIGIN_UPLOAD
+
+        def fake_launch(session, **kwargs):
+            captured_session["session"] = session
+            session.origin = ORIGIN_UPLOAD      # as /api/load_image would
+            session.output_path = None
+            session.is_applied = True
+            return True
+
+        monkeypatch.setattr(standalone, "launch_palette_trace_app", fake_launch)
+
+        assert standalone.main([str(image_file), "--no-browser"]) == 0
+        assert not default_output_path(image_file).exists()
+        assert "downloaded" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- #

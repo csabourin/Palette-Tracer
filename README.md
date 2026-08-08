@@ -25,6 +25,7 @@ Pre-release, under active development. See [docs/IMPLEMENTATION_STATUS.md](docs/
 * **Deterministic.** The same image and settings produce the same paths, every run. No reseeded clustering on each dialog open.
 * **Destination-aware.** Illustration, logo, screen printing, vinyl/paper cutting and laser destinations produce genuinely different geometry policies — stacked, trapped, exclusive layers, or named operation groups.
 * **Backend-neutral.** Vector tracing goes through a single protocol, so the engine is swappable and evaluated by conformance tests rather than assumed.
+* **Works on a phone.** Load a picture, pinch to zoom, and pick colours with a magnifier that shows the individual pixel you are aiming at.
 
 ## Requirements
 
@@ -70,12 +71,26 @@ Settings are stored on the source `<image>` element itself, so reopening the ext
 ### Standalone web application
 
 ```bash
+palette-trace-web
+```
+
+The interface opens in your browser and asks for a picture. Choose or drag one in — or take a photo, on a phone — and **Download SVG** hands the result back through the browser. Nothing is written to disk in this mode, and settings last for the session; save a preset to reuse a configuration.
+
+Give it a path instead, and it works against that file:
+
+```bash
 palette-trace-web path/to/image.png
 ```
 
-The same interface opens in your browser. **Export** writes an SVG next to the source image, and settings persist in a `.palettetrace.json` sidecar file.
+**Save SVG** then writes next to the source image, and settings persist in a `.palettetrace.json` sidecar file. (Load a different picture in the browser and it switches to the download route, so the file you named is never overwritten by an unrelated trace.)
 
 Run `palette-trace-web --help` for host, port and output options.
+
+### On a phone
+
+The interface is built narrow-screen-first: pinch to zoom the picture, press and drag to pick a colour with a magnifier that shows the exact pixel under your finger, and everything technical stays folded away until you ask for it. Everything is reachable by keyboard too, including colour picking.
+
+Because §9.1 binds the server to `127.0.0.1`, reaching it from a phone means running it somewhere the phone can see — set a `PORT` environment variable, or pass `--host`, and understand what you are exposing before you do.
 
 ## Privacy
 

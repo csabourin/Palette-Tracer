@@ -12,6 +12,13 @@ from palette_trace.server.api import handle_api_request
 
 WEB_DIR = Path(__file__).parent.parent / "web"
 
+#: §9.1 requires a restricted payload size. The ceiling is driven by
+#: `/api/load_image`, whose body is a base64 data URI of the chosen bitmap:
+#: base64 costs a third on top of `uploads.MAX_UPLOAD_BYTES`, and the rest is
+#: JSON framing. Every other endpoint sends a few kilobytes of settings.
+MAX_REQUEST_BYTES = 48 * 1024 * 1024
+
+
 class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
     session = None
 
@@ -28,7 +35,18 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
             self._serve_static_file(self.path)
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._send_json(400, {"error": "Malformed Content-Length header."})
+            return
+
+        if length > MAX_REQUEST_BYTES:
+            # Answer without draining the body: reading it is precisely the
+            # allocation the limit exists to refuse.
+            self._send_json(413, {"error": "That request is too large to accept."})
+            return
+
         raw_body = self.rfile.read(length) if length > 0 else b"{}"
         try:
             body = json.loads(raw_body.decode("utf-8")) if raw_body else {}

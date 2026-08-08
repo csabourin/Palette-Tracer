@@ -12,6 +12,7 @@ deliberately absent from the imports below.
 import argparse
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from PIL import Image
@@ -24,6 +25,7 @@ from palette_trace.server.app_server import launch_palette_trace_app
 from palette_trace.server.session import AppSession
 from palette_trace.settings import (
     compute_settings_hash,
+    create_default_settings,
     record_generation_provenance,
     source_has_changed,
 )
@@ -55,7 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="palette-trace-web",
         description="Art-directed multicolour bitmap tracing, as a local web application.",
     )
-    parser.add_argument("image", type=Path, help="path to the source bitmap")
+    parser.add_argument(
+        "image", nargs="?", type=Path,
+        help="path to the source bitmap; omit it to choose one in the browser",
+    )
     parser.add_argument(
         "-o", "--output", type=Path,
         help="output SVG path (default: <image stem>.palette-trace.svg)",
@@ -101,6 +106,13 @@ def _default_host_and_port(args: argparse.Namespace) -> tuple[str, int]:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.image is None:
+        # No path given: open on the interface's image-loading screen and let
+        # the user choose in the browser. This is the only workable entry point
+        # when the interface is reached from a phone, where the command line is
+        # not available and the server's filesystem is not the user's (§9.4.2).
+        return run_without_source(args)
+
     image_path = args.image.expanduser()
     if not image_path.is_file():
         print(f"error: no such file: {image_path}", file=sys.stderr)
@@ -141,6 +153,8 @@ def main(argv=None) -> int:
 
     session = AppSession(doc_path=str(image_path))
     session.image_source = source
+    session.image_name = image_path.name
+    session.output_path = output_path
     session.settings = settings
     session.source_changed = source_has_changed(settings, source.fingerprint)
     session.controller = PipelineController(source, settings)
@@ -164,7 +178,38 @@ def main(argv=None) -> int:
         print("Cancelled. Nothing was written.")
         return 0
 
+    if not session.can_write_to_disk:
+        # The user replaced the command-line bitmap with one chosen in the
+        # browser. Its result was delivered as a download, and the path given
+        # on the command line names a different image — writing there would
+        # overwrite an unrelated file's output.
+        print("Finished. The result was downloaded through the browser.")
+        return 0
+
     return commit(session, image_path, output_path)
+
+
+def run_without_source(args) -> int:
+    """
+    Serves the interface with no bitmap, ready for the user to load one.
+
+    Nothing is written to disk in this mode: without a source path there is
+    nowhere a sidecar belongs (§9.4.3) and no output path to honour (§9.4.4),
+    so results leave through the browser as downloads.
+    """
+    session = AppSession()
+    session.settings = create_default_settings(str(uuid.uuid4()))
+
+    host, port = _default_host_and_port(args)
+    launch_palette_trace_app(
+        session, open_browser=not args.no_browser, host=host, port=port
+    )
+
+    if session.is_cancelled:
+        print("Cancelled. Nothing was written.")
+    else:
+        print("Finished. Any result was downloaded through the browser.")
+    return 0
 
 
 def commit(session: AppSession, image_path: Path, output_path: Path) -> int:

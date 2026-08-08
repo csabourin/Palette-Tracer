@@ -392,64 +392,92 @@ Because the main Inkscape interface is blocked during a custom-GUI extension, al
 
 ## 9.2 Interface layout
 
-The interface SHOULD use a two-panel desktop layout and a stacked narrow-screen layout.
+The interface MUST be usable on a touchscreen phone. That is the binding constraint on this section: it is why the narrow layout is the base case rather than a reduction of the desktop one, why no interaction may depend on hover, a modifier key or a pointer, and why every interactive target is at least 44 CSS pixels on its shortest side.
 
-### Main controls
+The interface MUST use a stacked narrow-screen layout, and SHOULD widen into a two-panel layout — preview beside controls — where there is room for one.
 
+### 9.2.1 Progressive disclosure
+
+The interface MUST NOT present a control before it can do anything.
+
+* With no source bitmap loaded, the interface MUST show only the means of loading one (§9.4.2). Destination, scan count, palette and preview controls MUST NOT be on screen.
+* Controls that configure a subject that does not yet exist MUST be hidden until it does. The background matching and output modes (§16) are hidden until a background entry is chosen; a scan's colour-reach controls appear only for a pinned entry (§13); a trace profile's fields appear only when that profile is being set by hand (§18).
+* The following MUST be reachable but MUST NOT be presented before the user asks for them: tracing backend selection, background handling, reset to destination defaults, per-scan colour-reach channels, and per-scan trace profiles.
+
+Nothing in this subsection permits removing a control. Every setting named in this specification remains reachable without leaving the interface.
+
+### 9.2.2 Naming
+
+Controls MUST be named for the action they perform or the outcome they produce, in the user's vocabulary rather than this specification's. A control MUST NOT be labelled with a settings-schema key, and a destination MUST be offered as the thing being made rather than as a preset identifier.
+
+Where a setting's effect can be stated as a result, the interface SHOULD state it — the share of the picture a colour covers, the number of flat colours the result will contain, what a destination does to the geometry.
+
+### 9.2.3 Main controls
+
+* Load a source bitmap (§9.4.2)
 * Destination
 * Number of scans
 * Tracing backend
-* Preview quality
 * Load preset
 * Save preset
 * Reset to destination defaults
+* Commit the result
 
-### Preview panel
+The commit control MUST name where the result will go: into the open document, into the configured output file, or as a download (§9.4.2).
+
+Preview quality is deliberately absent from this list. §17.4 preview scaling is not implemented, so a preview-quality control would be a control that does nothing, which §9.2.1 forbids. It returns to this list when preview scaling exists.
+
+### 9.2.4 Preview panel
 
 Preview modes:
 
-* Source
-* Quantized colours
-* Selected colour claim
-* All scan masks
-* Vector preview
-* Production preview
+* **Source** — the decoded bitmap, unmodified.
+* **Result** — every scan's traced geometry filled with its output colour. This is the quantized-colour, vector and production preview of earlier drafts of this section: they render the same geometry, and offering them as separate modes implied a difference the pipeline does not produce.
+* **Coverage** — each scan's claimed region, tinted with its output colour and outlined, over the source. This carries the selected-colour claim, all-scan-mask, overlap and mask-boundary requirements below.
 
 Required interactions:
 
-* Zoom
+* Zoom, including a two-finger pinch gesture where the pointer supports one
 * Pan
 * Fit to window
 * Actual pixels
-* Sample colour
+* Sample colour (§9.3)
 * Toggle scan visibility
 * Show claimed-pixel percentage
 * Show overlaps or unresolved pixels
 * Show mask boundaries
 
-### Palette panel
+Every one of these MUST have a control or key that does not require a pointer gesture.
 
-Each row MUST show:
+### 9.2.5 Palette panel
+
+The palette is a list of colours. Each row MUST show, without the user opening anything:
 
 * Swatch
 * Name
 * Automatic or Pinned status
+* Output colour, as text
+* Share of the source it covers
+* Warning indicator
+
+Opening a row MUST additionally expose:
+
 * Source anchor
-* Output colour
 * Colour reach
 * Role
 * Trace profile
 * Visibility
 * Layer order
-* Warning indicator
-* Edit action
+* Remove
 
 Reordering MUST be possible through both:
 
 * Drag and drop.
 * Keyboard-accessible Move up / Move down controls.
 
-Colour MUST NOT be the only means of identifying a scan.
+Colour MUST NOT be the only means of identifying a scan. Every row therefore carries its output colour and its automatic/pinned status as text.
+
+Adding a picked colour MUST NOT overwrite a colour the user picked earlier. When no automatic entry remains to take it, the palette grows and the scan count follows.
 
 ## 9.3 Picked-colour behaviour
 
@@ -459,10 +487,19 @@ Default picker sample:
 * Median or robust dominant sample.
 * Not arithmetic mean.
 
-Modifier behaviour:
+An arithmetic mean is forbidden because averaging across an edge returns a colour that appears nowhere in the source — precisely the colour a user aiming at an edge does not want.
+
+Sample size:
 
 * Exact-pixel sampling MUST be available.
 * A larger dominant-colour sample MAY be offered.
+* Sample size MUST be selectable through an on-screen control. A modifier key MUST NOT be the only way to reach a sample size, because a touchscreen has none.
+
+Aiming:
+
+* The interface MUST provide a magnifier that shows the source pixels around the sample point at a magnification sufficient to distinguish individual pixels, with the pixel to be sampled marked.
+* The magnifier MUST track a press-and-drag gesture and commit on release, so the sample point is not obscured by the finger making it.
+* Aiming MUST also be possible without a pointer: a keyboard MUST be able to move the sample point by one source pixel at a time and commit it.
 
 After sampling:
 
@@ -505,10 +542,10 @@ The following MUST hold for the shared modules:
 
 The standalone host MUST:
 
-* Accept one local image path.
+* Accept one local image path, **or** no image path at all, in which case it serves the interface's image-loading screen and the user chooses a bitmap in the browser (§9.2.1).
 * Serve the same local interface under the same §9.1 and §31 constraints.
 * Open the interface in the user's browser.
-* Write a standalone SVG document on Apply.
+* Write a standalone SVG document on Apply, when it has an output path to write to.
 * Exit after Apply, Cancel or inactivity timeout.
 * Function with no Inkscape installation present.
 
@@ -517,6 +554,29 @@ The standalone host MUST NOT:
 * Accept a remote URL as a source.
 * Serve any file outside its bundled interface assets and the selected source image.
 * Write outside the user-specified output path.
+
+#### Browser-supplied source bitmaps
+
+Requiring a path on the command line makes the standalone host unusable from any device without a shell, and from any device whose filesystem is not the server's — which is every phone. The interface therefore MUST be able to supply the source bitmap itself.
+
+The bitmap's bytes MUST arrive in a request body. The host MUST NOT gain an endpoint that lists, browses or reads a path chosen by the client: §9.1's prohibition on arbitrary filesystem browsing is not relaxed by this section, and the browser's own file chooser is what selects the file.
+
+An uploaded bitmap:
+
+* MUST be decoded in memory. It MUST NOT be written to disk, so there is no temporary file to delete at session completion (§9.1).
+* MUST be rejected unless its declared type is a bitmap format the host can decode.
+* MUST be rejected above a documented byte ceiling, enforced before decoding (§9.1 restricted payload size).
+* MAY be scaled down before tracing when it is large enough that full-resolution tracing would appear to hang. When it is, the interface MUST say so and MUST state the dimensions actually traced. The scale factor MUST be derived from a fixed pixel budget, so the same upload always produces the same geometry (§34.30).
+* MUST replace the session's settings with destination defaults rather than inheriting the previous bitmap's palette. Pinned colours, claims and layer order describe the bitmap they were made against.
+
+A session whose bitmap arrived this way has no source path, and therefore:
+
+* has no sidecar location (§9.4.3), so its settings are session-scoped. A saved preset (§26) is how a configuration outlives such a session.
+* MUST NOT write to an output path derived from a different bitmap. Its result MUST leave as a download instead.
+
+Delivering a result as a download MUST NOT end the session. A download is a checkpoint; the user may adjust and produce another.
+
+The Inkscape host MUST NOT offer browser-supplied bitmaps. It is bound to a selected `<image>` whose settings live on that element (§10.2) and whose result is committed beside it; swapping the bitmap underneath it has no meaning.
 
 ### 9.4.3 Standalone persistence
 
@@ -529,6 +589,8 @@ The Inkscape host stores settings on the source `<image>` element (§10.2) so th
 The sidecar MUST contain the same §11 image-settings object that `pt:settings` would contain.
 
 The sidecar MUST be treated as advisory: a missing, unreadable or wrong-version sidecar MUST fall back to destination defaults rather than failing.
+
+A bitmap supplied through the browser (§9.4.2) has no path and therefore no sidecar. Its settings are session-scoped; a saved preset (§26) is the mechanism for carrying a configuration beyond such a session.
 
 Deleting the source image does not delete the sidecar. The standalone host MUST tolerate an orphaned sidecar and SHOULD ignore one whose recorded fingerprint cannot be reconciled with any source.
 
@@ -550,11 +612,11 @@ Where a requirement in this specification refers to the SVG document, the source
 
 | Requirement | Inkscape host | Standalone host |
 | ----------- | ------------- | --------------- |
-| §34.1 Open one selected bitmap | Selected `<image>` in the document | Image path given on the command line |
-| §34.2 Restore stored settings | `pt:settings` on the image | Sidecar file |
-| §34.22 Settings stored on the source | On the `<image>` element | Sidecar beside the image |
+| §34.1 Open one selected bitmap | Selected `<image>` in the document | Image path given on the command line, or a bitmap chosen in the browser (§9.4.2) |
+| §34.2 Restore stored settings | `pt:settings` on the image | Sidecar file; a browser-supplied bitmap has none, and starts from destination defaults |
+| §34.22 Settings stored on the source | On the `<image>` element | Sidecar beside the image; not applicable to a browser-supplied bitmap, which has no path |
 | §34.23 Deleting the image deletes its settings | Inherent — settings are an attribute | Not applicable; the sidecar is separate and orphans MUST be tolerated |
-| §34.25 Replace the linked generated group | Replace the group in place | Rewrite the output SVG |
+| §34.25 Replace the linked generated group | Replace the group in place | Rewrite the output SVG, or emit a fresh download |
 | §34.29 Errors do not corrupt the document | Group swap after successful build | Atomic file replace |
 
 ---

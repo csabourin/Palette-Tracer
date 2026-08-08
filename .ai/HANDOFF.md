@@ -6,88 +6,110 @@
 
 ## Session metadata
 
-* **Last updated:** 2026-08-07
+* **Last updated:** 2026-08-08
 * **Updated by:** Claude
-* **Current branch:** `phase0-conformance-and-standalone-host` (unchanged; the prior session's commit on this branch was already merged to `master` via PR #2 before this session started — see "Git state" below)
-* **Working tree:** Modified, not yet committed at the time of writing — see the diff for the exact file list
+* **Current branch:** `claude/mobile-friendly-interface-redesign-yjvcyb`, branched from `d3f5cf1` (`origin/master`, PR #4 merged)
 * **Current phase:** Phase 2 — Portable interface
-* **Primary objective this session:** Fix `apply_destination_preset` never being called, then bring the browser interface up to what the headless core supports (channel tolerances, background controls, per-scan trace profiles, layer reordering, the §27 fingerprint-changed dialog, and saved-preset save/load).
+* **Primary objective this session:** Make the interface usable on a phone by someone who does not know what a "scan" or a "colour reach" is: browser image loading, a magnifier colour picker, progressive disclosure, and outcome-named controls.
 
 ## Start here
 
 1. `git status` / `git log --oneline -5` — confirm this matches what's described below.
-2. `make test` → expect `277 passed`.
-3. `make phase0` → expect `12/12` and `Phase 0 gate criteria MET`.
-4. Read `docs/IMPLEMENTATION_STATUS.md` for per-requirement state — it was updated this session.
+2. `.venv/bin/python -m pytest tests/ -q --ignore=tests/unit/test_schema.py --ignore=tests/unit/test_selection.py` → expect `337 passed`. See "Environment limitation" for why those two are ignored.
+3. Read `docs/IMPLEMENTATION_STATUS.md` — updated this session, including four new Known blockers.
 
-## Git state (read before doing anything with branches)
+## Environment limitation (read before believing a red suite)
 
-`phase0-conformance-and-standalone-host`'s only commit (`302582d`) was already merged into `origin/master` via PR #2 (merge commit `c19c1f7`) before this session began. Local `master` has been fast-forwarded to `origin/master`. There was nothing to reconcile — no conflicting changes existed on `master` beyond that merge. This session's new work is uncommitted on top of `phase0-conformance-and-standalone-host`, which is otherwise identical to `master`.
+`inkex` cannot be installed in this container: `pip install inkex` fails at metadata generation with `Dependency 'girepository-2.0' is required but not found`. `tests/unit/test_schema.py` and `tests/unit/test_selection.py` import it at module level and therefore fail collection here.
+
+Consequences, both environmental rather than regressions:
+
+* the full `make test` is uncollectable; run it with those two modules ignored;
+* `make phase0` reports **11/12**, its only failing check being the unit suite.
+
+Both were already true before this session's changes — verified by stashing them and re-running.
 
 ## What changed this session
 
-### Fixed: destination presets were never applied
+### The interface was rewritten
 
-`presets/destination.py::get_destination_preset` existed, was tested nowhere, and was called nowhere. Choosing a destination in the interface changed only `settings.destination.id`; geometry policy, trapping/underlap and the global trace profile stayed on the illustration defaults no matter what was picked. Added `apply_destination_preset(settings, dest_id)`, wired into two new endpoints:
+`web/index.html`, `web/app.js` and `web/styles.css` were replaced. The previous interface put the whole technical surface on screen at once and had no way to load a picture.
 
-* `POST /api/apply_destination` — called when the destination `<select>` changes.
-* `POST /api/reset_destination_defaults` — SPEC §9.2's "Reset to destination defaults" button; re-applies the *current* destination's technical defaults, discarding manual geometry/profile tweaks.
+Three views now exist, one at a time: **load a picture**, **workspace**, **done**. Before a bitmap exists, the only thing on screen is the means of getting one.
 
-Both leave palette entries, scan count and picked colours untouched — only destination-governed fields change. Verified live in-browser (destination → laser produced `geometry.policy: "separate_operations"` and fabrication-clean trace values in the actual API response) and in `tests/unit/test_destination_presets.py` / `tests/unit/test_api.py::TestDestinationEndpoints`.
+* **Mobile-first CSS.** The narrow layout is the base; the two-panel desktop layout is a `min-width: 900px` enhancement. Touch targets are at least 44 px; `touch-action: none` on the canvas viewport so pan and pinch do not fight the page.
+* **Naming.** Destinations are offered as "An illustration", "A screen print", "A vinyl or paper cut" with a sentence on what each does to the geometry. Controls state their result — "Your picture will be reduced to 4 flat colours", "45% of the picture". The default entry name changed from `Scan N` to `Colour N` in `settings.py`, which also changes SVG layer labels.
+* **Progressive disclosure.** Backend, backdrop and geometry reset live behind a closed `Fine-tuning` disclosure. Backdrop matching/output modes appear only once a backdrop colour is chosen. Colour-reach controls appear only for pinned entries. Per-scan channel tolerances and trace profiles sit inside each colour's sheet, behind a further disclosure. Nothing was removed.
+* **Picking is additive.** `addPickedColour` grows the palette (and `scanCount`) when no automatic entry is left, instead of overwriting a colour the user picked earlier. It also refuses to add a duplicate hex.
 
-### `custom`/`presetId` vs `override`/`profileId` naming
+### The magnifier picker (§9.3)
 
-`SPEC.md` used `mode: "custom"` with a full `profile: TraceProfile` replacement; `presets/profiles.py` (and its existing, already-passing tests) used `mode: "override"` with a partial `values` merge and `profileId`. The code's convention won — a full-replacement `custom` mode would force every override to restate all twelve profile fields and would silently drop new `TraceProfile` fields added later. `SPEC.md` §11 and §18 were rewritten to match the code, with the rationale recorded in §18. Nothing in `presets/profiles.py` changed.
+Press and drag on the picture: a 13-source-pixel magnifier with a pixel grid and a marked centre pixel follows above the contact point, showing the hex live, and commits on release. Sample size — one pixel / 5×5 median / 15×15 dominant — is an on-screen segmented control, because a touchscreen has no modifier keys.
 
-### Browser interface — the Phase 2 gap this closes
+The live readout is computed client-side (`app.js::sampleLocally`, mirroring `server/api.py::sample_source_color`) so there is no network round trip inside a drag; the value actually committed still comes from the server.
 
-`web/index.html`, `web/app.js` and `web/styles.css` were rewritten (previously ~310 lines total; the interface exposed destination/scan-count/backend and a bare Colour-reach slider only). Added:
+Keyboard picking exists and was tested: arrows move the sample point one source pixel at a time, Shift by ten, Enter commits. Without it, picking would be pointer-only.
 
-* Independent hue/chroma/lightness tolerance controls (§13.2), with a client-side `srgbToOklch` port of `color/conversion.py` driving the §13.4 low-chroma hue-default and the "Hue has little effect" hint.
-* Background entry selector, matching-mode and output-mode controls (§16), kept in sync with per-entry `role`.
-* Per-scan trace profile editor (§18): Inherit / named preset / Customize, with the Customize editor exposing the same 12 mask/vector fields the global profile has (field-level granularity — see the decision recorded in `SPEC.md` §18).
-* Layer reordering (§9.2): keyboard-accessible Move up/down buttons (always present) plus native HTML5 drag-and-drop (pointer-only enhancement).
-* The §27 fingerprint-changed recovery dialog, all four choices, via a new `POST /api/resolve_source_change`. The §27 *missing-source* dialog (3 choices) is **not** built — see Known blockers in `docs/IMPLEMENTATION_STATUS.md` for why that's a separate, larger change.
-* Save/load/apply/delete for user presets (§26), via `presets/user_presets.py::build_configuration_patch`/`apply_configuration_patch` and `/api/user_presets*`. Also fixed hard-coded `createdAt`/`updatedAt` timestamps. Rename/duplicate/import/export are not built.
+### Browser image loading (§9.4.2)
 
-New/changed server endpoints, all in `palette_trace/server/api.py`: `/api/destination_presets`, `/api/apply_destination`, `/api/reset_destination_defaults`, `/api/trace_profiles`, `/api/resolve_source_change`, `/api/user_presets` (GET/POST), `/api/user_presets/apply`, `/api/user_presets/delete`. `/api/session` now also returns `sourceChanged`. Every mutating endpoint now returns the full updated `settings` object rather than a partial field set, so the client always re-syncs from one shape.
+* `POST /api/load_image` takes a base64 data URI, decodes in memory (`server/uploads.py`), and never writes it to disk.
+* `POST /api/export` returns the assembled SVG for download and deliberately **does not** end the session.
+* `standalone.py` now takes the image path as optional (`nargs="?"`); `run_without_source` serves the loading screen.
+* `AppSession.commit_target` resolves to `document` / `file` / `download`, and the interface names its primary button after it.
+* Loading a picture in a session that was launched with a path clears `output_path`, so the result cannot be written over an unrelated file's output. Covered by `test_standalone_host.py::test_swapping_the_image_in_the_browser_leaves_the_named_output_alone`.
+* Uploads above 4 MP are downscaled (`MAX_WORKING_PIXELS`) with a notice stating the traced dimensions, because §17.4 preview scaling does not exist and a 12 MP photo makes the pipeline look hung. Deterministic: fixed budget, explicit LANCZOS.
 
-Accessibility (§29) was a hard constraint throughout, not a pass at the end — see the Accessibility notes in the session's final report to the user (not duplicated here; read `docs/IMPLEMENTATION_STATUS.md`'s §29 row for the tracked summary). No automated a11y suite exists yet; verification this session was manual (accessibility-tree inspection via the Claude Browser tool, plus interaction testing), not axe-core/Lighthouse/a real screen reader.
+### Server-side supporting changes
 
-### Replit runnability
+* `MAX_REQUEST_BYTES` (48 MiB) in `app_server.py`, answered as 413 **without reading the body**. §9.1 always required a payload limit; image loading is what made it load-bearing.
+* `sample_source_color` extracted from the endpoint and given the third (dominant) mode.
+* `PipelineController` now reports `coveragePercent` per scan. `claims_stats` covers pinned entries only, so the interface previously had to show automatic colours as "0% of the picture", which reads as "found nothing". Reported only — no geometry depends on it.
 
-Added `.replit`, `replit.nix`, `scripts/replit_run.sh`, and `examples/sample.png` (a small generated fixture — Palette Trace has no other bundled sample image). `palette_trace/server/app_server.py::launch_palette_trace_app` and `palette_trace/standalone.py` gained `--host`/`--port` (defaulting to `127.0.0.1`/ephemeral per §9.1 unless `$PORT` is set, which Replit does and nothing else plausibly would). A `/` request with no `?token=` now 302s to the tokened URL — a UX nicety for Replit's webview, not a security change (`/api/*` still requires the token header regardless). Locally smoke-tested `$PORT=8080` → binds `0.0.0.0:8080`; not run inside an actual Replit container.
+### `SPEC.md`
+
+§9.2 was rewritten (mobile-first, progressive disclosure, naming, revised preview modes and palette rows), §9.3 gained the sample-size and aiming requirements, and §9.4.2 gained a "Browser-supplied source bitmaps" subsection. §9.4.3 and §9.4.5 note that a browser-supplied bitmap has no sidecar.
+
+Two deliberate reductions, both recorded in the spec text itself:
+
+* the six preview modes became three — the quantized, vector and production modes rendered identical geometry, so offering them separately implied a difference the pipeline does not produce;
+* "Preview quality" was dropped from the main controls, because §17.4 preview scaling is unimplemented and §9.2.1 forbids showing a control that does nothing.
 
 ## Validation performed
 
 | Command | Result | Notes |
 | ------- | ------ | ----- |
-| `make test` | Passed | `277 passed` (235 → 277: 42 new tests across `test_destination_presets.py`, `test_user_presets.py`, `test_api.py`, plus additions to `test_settings_provenance.py`) |
-| `make phase0` | Passed | `12/12` |
-| Manual browser verification | Passed | Standalone host launched against `examples/sample.png`; exercised destination change, colour picking (pin → API → re-render), per-scan trace-profile override editor, save/apply/delete preset round trip, and a full Apply → SVG + sidecar write, all via the Claude Browser tool. No console errors at any point. Accessibility tree confirmed programmatic label association, dialog focus-trapping (background content excluded from the tree while a `<dialog>` is open), and accessible names on icon-only buttons (e.g. "Move Scan 1 up", "Delete preset Test preset") |
-| `$PORT`-driven bind smoke test | Passed | `PORT=8080 .venv/bin/python -m palette_trace.standalone ... ` → bound `0.0.0.0:8080`; bare `/` returned 302 to the tokened URL |
+| `pytest tests/ --ignore=test_schema.py --ignore=test_selection.py` | Passed | `337 passed` (277 → 337: `test_uploads.py` 19, `test_app_server.py` 12, plus additions to `test_api.py`, `test_standalone_host.py` and `test_pipeline.py`) |
+| `scripts/check_phase0.py` | 11/12 | Only the unit-suite check fails, and only because `inkex` is uninstallable here — see above |
+| Live API smoke test (`curl`) | Passed | Session with no image → load → sample (`15x15_dominant`) → export produced a 3,975-byte SVG with `pt:` provenance |
+| Scripted Chromium session, iPhone 13 viewport | Passed | Load → magnifier pick → keyboard pick → stepper → lock exact → remove → backdrop selection → preset save/apply → download. Zero console errors |
+| Scripted Chromium session, 1440×900 | Passed | Same flow; two-panel layout, panel scrolls internally (`documentElement.scrollHeight === innerHeight`) |
 
-## Known failures
+## Defects found by browser testing and fixed
 
-None. The suite is green.
+None of these were caught by the Python suite, and none would have been caught by reading the code:
 
-## Bug found and fixed mid-session
+1. **`[hidden]` did nothing.** A class rule that sets `display` outranks the UA's `[hidden] { display: none }`, so the "Picture changed" badge, the picking bar and the backdrop detail controls were permanently visible. Fixed with a global `[hidden] { display: none !important }`.
+2. **The zoom buttons were dead.** The viewport's `pointerdown` handler called `setPointerCapture`, which retargeted the follow-up `click` away from the HUD buttons inside it. Fixed by ignoring pointerdowns that originate on a `button`.
+3. **Automatic colours reported "0% of the picture".** Led to the `coveragePercent` change above.
+4. **The desktop layout scrolled the whole page** instead of scrolling the controls panel: `.workspace` had `flex: 1` inside a container with only `min-height`, so it sized to content and the explicit `height` was ignored.
 
-`web/app.js::pinColor` called `pushSettings()` without awaiting it, then immediately called `announceStatus("Pinned … to …")`. Because `pushSettings()` itself calls `announceStatus("Settings updated.")` after its `await`, the generic message always overwrote the more useful specific one in the `aria-live` region. Fixed by awaiting `pushSettings()` before the specific announcement. Caught via live browser testing (the status region read "Settings updated." instead of the pin message), not by the Python test suite — there is no JS test harness in this repo.
+Also fixed: duplicate backend warnings (one message repeated once per scan), and a `/favicon.ico` 404 in the console (an empty `data:` icon link, no remote asset).
 
-## Unverified assumptions (new this session)
+## Unverified assumptions
 
-* [ ] Replit actually runs `scripts/replit_run.sh` the way `.replit` describes — only smoke-tested locally with `$PORT` set by hand, not inside a real Replit container.
-* [ ] The manual accessibility verification (accessibility-tree inspection + interaction testing through an automation tool) is not a substitute for a real screen reader (NVDA/VoiceOver/JAWS) pass. Structure and semantics were checked; the actual spoken/braille experience was not.
-* [ ] Drag-and-drop reordering was implemented but not exercised in the browser session (Move up/down buttons were). It's a pointer-only enhancement over an already-functional keyboard path, so the risk if it's subtly broken is low, but it hasn't been clicked.
+* [ ] The scripted browser sessions used Chromium only. Safari on iOS is the platform where `dialog`, `touch-action`, `env(safe-area-inset-*)` and pointer capture most plausibly differ, and it has not been tried.
+* [ ] Real-device touch was never used — Playwright's synthetic touch is not a fingertip, and the magnifier's offset above the contact point is tuned by eye.
+* [ ] No accessibility audit was run this session. Keyboard paths were exercised; a screen reader was not.
+* [ ] The Inkscape host's changes (`session.image_name`, `can_load_image` refusing uploads) are unexercised — `inkex` will not install here.
+* [ ] Drag-to-reorder in the swatch list was implemented but not clicked; the Move back / Move forward buttons in each colour's sheet were.
 
 ## Immediate next actions
 
-1. Real assistive-technology pass (NVDA or VoiceOver) over the interface, or at minimum an axe-core/Lighthouse run, before calling §29 "Verified" rather than "In progress".
-2. §27 missing-source dialog — requires deferring the Inkscape host's early `PaletteTraceError` raise in `palette_trace.py::_run` so the web interface can launch and offer "Locate replacement" / "Keep existing vectors" / "Cancel" instead of failing before the UI ever opens.
-3. Install the extension into an Inkscape user extensions directory and run it against a real document — still the largest unverified assumption in the whole project, unrelated to this session's work.
-4. §26.4 preset rename/duplicate/import/export, if a user actually needs them — save/apply/delete cover the workflow described in this session's task.
-5. Capture golden SVGs for a small fixture set (§33.3) — unrelated to this session, still open from before.
+1. **Add `tests/ui/` with Playwright.** Four real defects this session were only findable in a browser, and nothing in the repository would catch them coming back. This is the highest-value gap in Phase 2.
+2. Fix the container so `inkex` installs, or make those two test modules skip when it is absent, so the Phase 0 gate is meaningful again.
+3. Accessibility pass with a real screen reader, plus axe-core, before calling §29 Verified.
+4. §27 missing-source dialog — still requires deferring the Inkscape host's early `PaletteTraceError`.
+5. Implement §17.4 preview scaling, which would let `MAX_WORKING_PIXELS` be raised or removed.
 
 ## Handoff freshness checks
 

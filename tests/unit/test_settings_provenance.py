@@ -117,7 +117,7 @@ class TestSourceChangeRecovery:
 
         reset_automatic_entries_preserving_pinned(settings)
 
-        assert settings["palette"]["entries"][0]["name"] == "Scan 1"
+        assert settings["palette"]["entries"][0]["name"] == "Colour 1"
         assert settings["palette"]["entries"][0]["output"]["color"] is None
 
     def test_reset_automatic_preserves_entry_ids_and_count(self):

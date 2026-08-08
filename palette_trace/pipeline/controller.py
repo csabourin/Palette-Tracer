@@ -227,6 +227,7 @@ class PipelineController:
         )
         capabilities = backend.capabilities()
         scan_results = []
+        total_pixels = float(self.source.intrinsic_width * self.source.intrinsic_height) or 1.0
 
         for index, entry in enumerate(enabled_entries):
             entry_id = entry["id"]
@@ -243,6 +244,11 @@ class PipelineController:
                 "color": self._output_color(entry),
                 "role": "background" if is_background else entry.get("role", "primary_fill"),
                 "isBackground": is_background,
+                # Share of the picture this scan ends up owning, after cleanup
+                # and geometry. `claims_stats` covers pinned entries only, so
+                # without this the interface has nothing truthful to report for
+                # an automatic colour. Reported only; it affects no geometry.
+                "coveragePercent": float(np.count_nonzero(mask)) * 100.0 / total_pixels,
                 "pathDatas": [],
                 "fillRule": "evenodd",
                 "warnings": [],
