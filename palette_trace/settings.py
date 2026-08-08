@@ -32,7 +32,11 @@ def create_palette_entry(index: int, entry_id: str | None = None) -> dict:
     """Builds one default automatic palette entry."""
     return {
         "id": entry_id or str(uuid.uuid4()),
-        "name": f"Scan {index + 1}",
+        # "Scan" is this specification's term for the concept (§6.2), but it is
+        # not a word a user brings with them. The default *name* is the one
+        # they see in the interface and in the output's layer labels, so it
+        # says what the thing is rather than what the model calls it.
+        "name": f"Colour {index + 1}",
         "enabled": True,
         "kind": "automatic",
         "sourceAnchor": None,

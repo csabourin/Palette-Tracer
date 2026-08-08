@@ -77,6 +77,10 @@ class PaletteTraceExtension(inkex.EffectExtension):
         # changed since this configuration was last applied.
         session = AppSession(image_elem=image_elem, doc_path=doc_path)
         session.source_changed = source_has_changed(settings, image_source.fingerprint)
+        # Shown as the interface's subject line. The Inkscape label is the name
+        # the user gave the image; falling back to a generic phrase keeps local
+        # filesystem paths out of browser-visible data (§9.1).
+        session.image_name = image_elem.get("inkscape:label") or "Selected image"
 
         session.image_source = image_source
         session.settings = settings

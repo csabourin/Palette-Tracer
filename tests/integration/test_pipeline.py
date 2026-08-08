@@ -78,6 +78,27 @@ class TestBasicExecution:
         output = PipelineController(source, settings).run_pipeline()
         assert all(s["pathDatas"] for s in output["scan_results"])
 
+    def test_every_scan_reports_the_share_it_owns(self, source, settings):
+        """
+        The interface reports coverage for every colour, not only pinned ones:
+        `claims_stats` covers pinned entries alone, so an automatic colour
+        would otherwise have to be shown as 0%, which reads as "found nothing".
+        """
+        output = PipelineController(source, settings).run_pipeline()
+        coverage = {s["entryId"]: s["coveragePercent"] for s in output["scan_results"]}
+
+        assert coverage["e_red"] == pytest.approx(50.0, abs=2.0)
+        assert coverage["e_blue"] == pytest.approx(50.0, abs=2.0)
+        assert sum(coverage.values()) == pytest.approx(100.0, abs=2.0)
+
+    def test_an_automatic_entry_also_reports_coverage(self, source):
+        config = create_default_settings("test-img-uuid")
+        config["scanCount"] = 2
+        output = PipelineController(source, config).run_pipeline()
+
+        assert not output["claims_stats"]          # nothing is pinned
+        assert all(s["coveragePercent"] > 0 for s in output["scan_results"])
+
     def test_backend_provenance_is_reported(self, source, settings):
         """§10.3 requires the backend id and version on the generated group."""
         output = PipelineController(source, settings).run_pipeline()
