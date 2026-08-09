@@ -187,6 +187,89 @@ class TestLoadImage:
         assert status == 400
 
 
+class TestRawUpload:
+    """
+    §9.4.2: the bytes may also arrive as themselves, not wrapped in a data URI.
+
+    A phone photograph spends a third again on base64 plus a full encode and
+    decode pass on each end, all of it before the picture can appear.
+    """
+
+    def png_bytes(self, width=30, height=18):
+        buf = io.BytesIO()
+        Image.fromarray(two_colour_array(width, height), mode="RGBA").save(buf, format="PNG")
+        return buf.getvalue()
+
+    def post_raw(self, session, raw, extra_headers=None):
+        headers = {"X-Session-Token": session.session_token, **(extra_headers or {})}
+        body = {"rawBody": raw, "contentType": "image/png"}
+        return handle_api_request(session, "/api/load_image", "POST", body, headers)
+
+    def test_raw_bytes_load_the_same_picture_a_data_uri_would(self, empty_session):
+        status, body = self.post_raw(
+            empty_session, self.png_bytes(), {"X-File-Name": "holiday%20snap.png"}
+        )
+
+        assert status == 200
+        assert (body["imageWidth"], body["imageHeight"]) == (30, 18)
+        assert body["imageName"] == "holiday snap.png"
+
+    def test_bytes_that_are_not_an_image_are_refused(self, empty_session):
+        status, body = self.post_raw(empty_session, b"not a picture")
+        assert status == 400
+
+    def test_a_type_that_cannot_be_traced_is_refused(self, empty_session):
+        headers = {"X-Session-Token": empty_session.session_token}
+        status, body = handle_api_request(
+            empty_session, "/api/load_image", "POST",
+            {"rawBody": self.png_bytes(), "contentType": "application/pdf"}, headers,
+        )
+        assert status == 400
+
+    def test_a_client_holding_the_same_pixels_is_not_sent_them_back(self, empty_session):
+        status, body = self.post_raw(
+            empty_session, self.png_bytes(), {"X-Client-Width": "30", "X-Client-Height": "18"},
+        )
+        assert body["usesClientBitmap"] is True
+        assert "dataUri" not in body
+
+    def test_a_client_whose_pixels_no_longer_match_gets_the_preview(self, empty_session):
+        """A rotation or a resize during decode makes the client's copy wrong."""
+        status, body = self.post_raw(
+            empty_session, self.png_bytes(), {"X-Client-Width": "300", "X-Client-Height": "180"},
+        )
+        assert body.get("usesClientBitmap") is not True
+        assert body["dataUri"].startswith("data:image/png;base64,")
+
+    def test_deferring_the_trace_returns_the_picture_without_it(self, empty_session):
+        status, body = self.post_raw(empty_session, self.png_bytes(), {"X-Defer-Trace": "1"})
+
+        assert status == 200
+        assert body["hasImage"] is True
+        assert "scanResults" not in body
+
+    def test_the_deferred_trace_is_what_the_next_update_produces(self, empty_session):
+        self.post_raw(empty_session, self.png_bytes(), {"X-Defer-Trace": "1"})
+        status, body = call(empty_session, "/api/update_settings", "POST",
+                            {"settings": empty_session.settings})
+
+        assert status == 200
+        assert body["scanResults"]
+
+
+class TestNearestSourceColor:
+    def test_a_typed_colour_is_snapped_onto_the_picture(self, session):
+        status, body = call(session, "/api/nearest_source_color", "POST", {"hex": "#CC2020"})
+        assert status == 200
+        assert body["hex"] == "#C82828"
+
+    def test_something_that_is_not_a_colour_is_refused(self, session):
+        assert call(session, "/api/nearest_source_color", "POST", {"hex": "teal"})[0] == 400
+
+    def test_it_needs_a_picture_to_look_in(self, empty_session):
+        assert call(empty_session, "/api/nearest_source_color", "POST", {"hex": "#000000"})[0] == 400
+
+
 class TestExport:
     def test_export_returns_a_downloadable_svg(self, session):
         call(session, "/api/update_settings", "POST", {"settings": session.settings})

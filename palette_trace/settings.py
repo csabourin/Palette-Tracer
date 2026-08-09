@@ -98,6 +98,11 @@ def create_default_settings(image_uuid: str) -> dict:
             "layerOrder": [e["id"] for e in entries],
             "backgroundEntryId": None,
             "backgroundMatching": "all_matching",
+            # §16.1: what becomes of a patch of the backdrop colour that the
+            # matching mode leaves in the foreground. The default keeps it as a
+            # hole where a hole says the right thing, and gives it a layer of
+            # its own where one would not.
+            "backgroundForegroundPolicy": "hole_or_layer",
         },
         "alpha": {
             "fullyTransparentPolicy": "ignore",

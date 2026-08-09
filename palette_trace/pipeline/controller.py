@@ -14,15 +14,22 @@ import numpy as np
 
 from palette_trace.color.background import (
     ALL_MATCHING,
+    ISLAND_HOLE_OR_LAYER,
+    ISLAND_POLICIES,
     KEEP_PATHS,
     OMIT,
     REPLACE_WITH_RECTANGLE,
     background_rectangle_path,
     classify_background,
+    classify_background_islands,
 )
 from palette_trace.color.assignment import NEAREST_AVAILABLE, distribute_unclaimed
-from palette_trace.color.claims import resolve_claimed_pixels
-from palette_trace.color.histogram import build_color_histogram
+from palette_trace.color.claims import resolve_claim_indices
+from palette_trace.color.histogram import (
+    build_color_histogram,
+    snap_to_source_colors,
+    unique_source_colors,
+)
 from palette_trace.color.quantizer import run_deterministic_quantization
 from palette_trace.image_source import DecodedImageSource
 from palette_trace.masks.components import fill_small_holes, remove_small_speckles
@@ -109,20 +116,31 @@ class PipelineController:
         auto_entries = [e for e in enabled_entries if e.get("kind") != "pinned"]
 
         # -- Stage 5: pinned-colour claim ----------------------------------- #
-        claims_grid, claim_stats = resolve_claimed_pixels(self.source.oklch, pinned_entries)
+        claim_winners, claim_stats = resolve_claim_indices(self.source.oklch, pinned_entries)
 
         opaque = self.source.alpha >= alpha_threshold
-        unclaimed_mask = (claims_grid == None) & opaque      # noqa: E711 — object array
+        unclaimed_mask = (claim_winners < 0) & opaque
 
         # -- Stage 6: automatic quantization -------------------------------- #
         if auto_entries and np.any(unclaimed_mask):
             histogram = build_color_histogram(self.source.srgb, unclaimed_mask)
             quantized = run_deterministic_quantization(histogram, len(auto_entries))
+
+            # §34.5: a swatch has to be a colour the picture contains. A K-Means
+            # centroid is an average, so it is routinely a colour that appears
+            # nowhere — snapping each one back onto the nearest real pixel
+            # colour keeps the clustering and drops the invented value.
+            rgb255, counts, oklab = unique_source_colors(self.source.srgb, unclaimed_mask)
+            snapped = snap_to_source_colors(
+                [q["oklab"] for q in quantized], rgb255, counts, oklab
+            )
+
             for index, entry in enumerate(auto_entries):
                 if index < len(quantized):
+                    hex_value = snapped[index] if index < len(snapped) else quantized[index]["hex"]
                     entry["output"] = {
                         "mode": "automatic_centroid",
-                        "color": {"srgb": quantized[index]["hex"]},
+                        "color": {"srgb": hex_value},
                     }
 
         # -- Stage 7: label map and background classification ---------------- #
@@ -132,7 +150,9 @@ class PipelineController:
         label_map = LabelMap(
             self.source.intrinsic_height, self.source.intrinsic_width, entry_ids
         )
-        label_map.set_claims(claims_grid)
+        label_map.set_claims_from_indices(
+            claim_winners, [e["id"] for e in pinned_entries]
+        )
 
         # §14.4: unclaimed pixels go to the automatic cluster they are nearest
         # to. Assigning them all to one entry would compute an automatic palette
@@ -151,6 +171,8 @@ class PipelineController:
         background_entry_id = self.settings["palette"].get("backgroundEntryId")
         background_output = self.settings.get("output", {}).get("backgroundOutput", KEEP_PATHS)
         background_mask = None
+        islands = None
+        foreground_entry = None
 
         if background_entry_id and background_entry_id in entry_ids:
             matching = label_map.get_binary_mask(background_entry_id)
@@ -161,11 +183,24 @@ class PipelineController:
                 alpha_threshold,
             )
             # Pixels that matched but are not background under the selected mode
-            # (an enclosed region of the same colour, say) revert to unclassified
-            # rather than silently joining the backdrop.
-            reverted = matching & ~background_mask
-            if np.any(reverted):
-                label_map.data[reverted] = 0
+            # — the white of an eye when the backdrop is white — are foreground.
+            # They leave the backdrop first, so nothing counts them twice.
+            island_mask = matching & ~background_mask
+            if np.any(island_mask):
+                label_map.data[island_mask] = 0
+                islands = classify_background_islands(
+                    island_mask, label_map.data, self._island_policy()
+                )
+                if np.any(islands.layer_mask):
+                    foreground_entry = self._foreground_entry(
+                        next(e for e in enabled_entries if e["id"] == background_entry_id)
+                    )
+                if islands.summary():
+                    warnings.append({
+                        "code": "background_in_foreground",
+                        "entryId": background_entry_id,
+                        "message": islands.summary(),
+                    })
 
         # -- Stage 8: label-aware cleanup ------------------------------------ #
         global_profile = self.settings.get("globalTraceProfile", {})
@@ -173,7 +208,15 @@ class PipelineController:
         cleaned_masks = {}
         resolved_profiles = {}
 
-        for entry in enabled_entries:
+        # The foreground layer is a consequence of the picture, not a palette
+        # entry the user manages, so it is traced like any other scan but never
+        # written back into the settings document.
+        traced_entries = list(enabled_entries)
+        if foreground_entry is not None:
+            traced_entries.append(foreground_entry)
+            layer_order = layer_order + [foreground_entry["id"]]
+
+        for entry in traced_entries:
             entry_id = entry["id"]
             profile = resolve_entry_profile(entry, global_profile)
             resolved_profiles[entry_id] = profile
@@ -182,6 +225,8 @@ class PipelineController:
             raw_mask = label_map.get_binary_mask(entry_id)
             if entry_id == background_entry_id and background_mask is not None:
                 raw_mask = background_mask
+            elif foreground_entry is not None and entry_id == foreground_entry["id"]:
+                raw_mask = islands.layer_mask
 
             cleaned = remove_small_speckles(raw_mask, mask_cfg.get("minimumRegionAreaPx2", 4))
             cleaned = fill_small_holes(cleaned, mask_cfg.get("fillHolesAreaPx2", 4))
@@ -221,6 +266,15 @@ class PipelineController:
                     int(global_profile.get("mask", {}).get("minimumRegionAreaPx2", 4)),
                 ))
 
+        # A hole is subtracted last, after geometry: an underlap or a trap grows
+        # every shape outwards, and would close the very hole the picture asked
+        # for if it were punched any earlier.
+        if islands is not None:
+            for scan_label, hole_mask in islands.holes.items():
+                owner_id = label_map.label_to_id.get(scan_label)
+                if owner_id in cleaned_masks:
+                    cleaned_masks[owner_id] = cleaned_masks[owner_id] & ~hole_mask
+
         # -- Stage 10: vector tracing ---------------------------------------- #
         backend = self.backend_registry.get_backend(
             self.settings.get("backend", {}).get("preferredBackendId", "auto")
@@ -228,8 +282,9 @@ class PipelineController:
         capabilities = backend.capabilities()
         scan_results = []
         total_pixels = float(self.source.intrinsic_width * self.source.intrinsic_height) or 1.0
+        border_share = self._border_share(label_map)
 
-        for index, entry in enumerate(enabled_entries):
+        for index, entry in enumerate(traced_entries):
             entry_id = entry["id"]
             profile = resolved_profiles[entry_id]
             mask = cleaned_masks[entry_id]
@@ -244,11 +299,19 @@ class PipelineController:
                 "color": self._output_color(entry),
                 "role": "background" if is_background else entry.get("role", "primary_fill"),
                 "isBackground": is_background,
+                # True for a scan the pipeline invented rather than one the user
+                # can edit, so the interface can show it without offering
+                # controls that would have nothing to write to.
+                "derived": bool(entry.get("derived")),
                 # Share of the picture this scan ends up owning, after cleanup
                 # and geometry. `claims_stats` covers pinned entries only, so
                 # without this the interface has nothing truthful to report for
                 # an automatic colour. Reported only; it affects no geometry.
                 "coveragePercent": float(np.count_nonzero(mask)) * 100.0 / total_pixels,
+                # Share of the *frame* it owns. What sits around the edge of a
+                # picture is almost always its backdrop, so this is what lets
+                # the interface offer a one-tap backdrop instead of a menu.
+                "borderSharePercent": border_share.get(entry_id, 0.0),
                 "pathDatas": [],
                 "fillRule": "evenodd",
                 "warnings": [],
@@ -319,6 +382,48 @@ class PipelineController:
                 "id": capabilities.backend_id,
                 "version": capabilities.version,
             },
+        }
+
+    def _island_policy(self) -> str:
+        """What to do with backdrop-coloured patches in the foreground (§16.1)."""
+        policy = self.settings["palette"].get(
+            "backgroundForegroundPolicy", ISLAND_HOLE_OR_LAYER
+        )
+        return policy if policy in ISLAND_POLICIES else ISLAND_HOLE_OR_LAYER
+
+    @staticmethod
+    def _foreground_entry(background_entry: dict) -> dict:
+        """
+        The extra layer for backdrop-coloured shapes a hole cannot express.
+
+        It borrows the backdrop's colour and cleanup profile — it is the same
+        paint, just in front — but it is marked derived so nothing tries to
+        store it back into the palette.
+        """
+        entry = dict(background_entry)
+        entry["id"] = f"{background_entry['id']}::foreground"
+        entry["name"] = f"{background_entry.get('name', 'Backdrop')} in front"
+        entry["role"] = "primary_fill"
+        entry["derived"] = True
+        return entry
+
+    @staticmethod
+    def _border_share(label_map: LabelMap) -> dict:
+        """Percentage of the frame's outermost ring each entry owns."""
+        data = label_map.data
+        if data.size == 0:
+            return {}
+
+        border = np.concatenate([
+            data[0, :].ravel(), data[-1, :].ravel(),
+            data[:, 0].ravel(), data[:, -1].ravel(),
+        ])
+        counts = np.bincount(border, minlength=len(label_map.entry_ids) + 1)
+        total = float(border.size) or 1.0
+        return {
+            entry_id: float(counts[label]) * 100.0 / total
+            for entry_id, label in label_map.id_to_label.items()
+            if label < counts.size
         }
 
     @staticmethod

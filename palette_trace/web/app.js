@@ -4,6 +4,10 @@
 // picture, pick the colours that matter, say what they are making, get the
 // result — rather than around the settings document underneath it. Everything
 // technical is still reachable; it is just not the first thing on screen.
+//
+// On a phone the picture is the screen. Controls are icons at a 44px target,
+// prose lives inside sheets, and the palette is a strip along the bottom that a
+// finger can drag through.
 "use strict";
 
 const urlParams = new URLSearchParams(window.location.search);
@@ -66,15 +70,15 @@ const ROLE_LABELS = {
 };
 
 const MODE_CAPTIONS = {
-  source: "The picture exactly as it came in.",
+  source: "",
   result: "The flat shapes you will get.",
-  coverage: "Which colour has claimed which pixels. Outlines show where they meet.",
+  coverage: "Which colour has claimed which pixels.",
 };
 
 const COMMIT_WORDING = {
-  document: { action: "Add to drawing", done: "The traced shapes were added to your drawing." },
-  file: { action: "Save SVG", done: "The SVG file was written." },
-  download: { action: "Download SVG", done: "Your SVG was downloaded." },
+  document: { action: "Add", done: "The traced shapes were added to your drawing." },
+  file: { action: "Save", done: "The SVG file was written." },
+  download: { action: "Download", done: "Your SVG was downloaded." },
 };
 
 //: Reach values are a 0–100 dial in the settings document. These are the words
@@ -110,42 +114,150 @@ const state = {
   //: a network round trip per pointer move.
   sourcePixels: null,
 
-  //: Image-space → viewport-space transform. `null` scale means "not laid out
-  //: yet"; `fitView()` fills it in as soon as the viewport has a size.
+  //: Image-space → viewport-space transform. `fitted: false` means "not laid
+  //: out yet"; `fitView()` fills it in as soon as the viewport has a size.
   view: { scale: 1, tx: 0, ty: 0, fitted: false },
 
   picking: false,
-  sampleMode: "5x5_median",
+  //: A picked colour must be a colour the picture has. One pixel is the most
+  //: literal answer to that, so it is where the picker starts; the wider
+  //: samples are there for a noisy scan, and they too report a real pixel.
+  sampleMode: "exact",
   //: Where the magnifier is aimed, in source-pixel coordinates.
   target: null,
 
   openScanId: null,
+  colourSheet: null,
   lastFocusedBeforeDialog: null,
+
+  //: Palette edits are undoable (§9.2 is silent on this; every other tool a
+  //: designer opens has it, and picking colours is exactly the kind of work
+  //: that is done by trying things).
+  history: { past: [], future: [] },
 };
 
+const HISTORY_LIMIT = 40;
+
 // -------------------------------------------------------------------------
-// Colour maths — mirrors palette_trace/color/conversion.py so the interface
-// can apply the same §13.4 low-chroma rule the pipeline does, without asking
-// the server on every pointer move.
+// Colour maths
+//
+// Mirrors palette_trace/color/conversion.py so the interface can apply the
+// same §13.4 low-chroma rule the pipeline does, and can talk about a colour in
+// whatever notation the user brought with them, without a round trip.
 // -------------------------------------------------------------------------
+
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
-function srgbToOklch(r, g, b) {
+function linearToSrgb(c) {
+  return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055;
+}
+
+function srgbToOklab(r, g, b) {
   const lr = srgbToLinear(r), lg = srgbToLinear(g), lb = srgbToLinear(b);
-  const l = 0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb;
-  const m = 0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb;
-  const s = 0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb;
-  const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
-  const L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
-  const a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_;
-  const bb = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757993 * s_;
-  const C = Math.sqrt(a * a + bb * bb);
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+  return {
+    L: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    a: 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    b: 0.0259040371 * l + 0.7827717662 * m - 0.8086757993 * s,
+  };
+}
+
+function oklabToSrgb(L, a, bb) {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * bb) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * bb) ** 3;
+  const s = (L - 0.0894841775 * a - 1.2914855480 * bb) ** 3;
+  return {
+    r: clamp01(linearToSrgb(+4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s)),
+    g: clamp01(linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s)),
+    b: clamp01(linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)),
+  };
+}
+
+function srgbToOklch(r, g, b) {
+  const { L, a, b: bb } = srgbToOklab(r, g, b);
+  const C = Math.hypot(a, bb);
   let h = (Math.atan2(bb, a) * 180) / Math.PI;
   if (h < 0) h += 360;
   return { L, C, h };
+}
+
+function oklchToSrgb(L, C, h) {
+  const rad = (h * Math.PI) / 180;
+  return oklabToSrgb(L, C * Math.cos(rad), C * Math.sin(rad));
+}
+
+//: CSS `lab()` and `lch()` are D50-referred (CSS Color 4 §7). These are that
+//: specification's own matrix and white point, so a value pasted out of a
+//: browser's inspector round-trips.
+const D50 = [0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585];
+const XYZ_D50_TO_LINEAR = [
+  [3.1341359569958707, -1.6173863321612538, -0.4906619460083532],
+  [-0.978795502912089, 1.9161404236526823, 0.033442731161319486],
+  [0.07195537988411677, -0.22897682641583285, 1.4053400641663395],
+];
+
+function labToSrgb(L, a, bb) {
+  const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - bb / 200;
+  const epsilon = 216 / 24389, kappa = 24389 / 27;
+  const expand = (f, useCube) => (useCube ? f ** 3 : (116 * f - 16) / kappa);
+
+  const xyz = [
+    expand(fx, fx ** 3 > epsilon) * D50[0],
+    (L > kappa * epsilon ? ((L + 16) / 116) ** 3 : L / kappa) * D50[1],
+    expand(fz, fz ** 3 > epsilon) * D50[2],
+  ];
+
+  const [r, g, b] = XYZ_D50_TO_LINEAR.map(
+    (row) => row[0] * xyz[0] + row[1] * xyz[1] + row[2] * xyz[2]
+  );
+  return { r: clamp01(linearToSrgb(r)), g: clamp01(linearToSrgb(g)), b: clamp01(linearToSrgb(b)) };
+}
+
+function hslToSrgb(h, s, l) {
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return { r: clamp01(f(0)), g: clamp01(f(8)), b: clamp01(f(4)) };
+}
+
+function srgbToHsl(r, g, b) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (!d) return { h: 0, s: 0, l };
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  return { h: h < 0 ? h + 360 : h, s, l };
+}
+
+function hsvToSrgb(h, s, v) {
+  const l = v * (1 - s / 2);
+  return hslToSrgb(h, l === 0 || l === 1 ? 0 : (v - l) / Math.min(l, 1 - l), l);
+}
+
+function cmykToSrgb(c, m, y, k) {
+  return {
+    r: clamp01((1 - c) * (1 - k)),
+    g: clamp01((1 - m) * (1 - k)),
+    b: clamp01((1 - y) * (1 - k)),
+  };
+}
+
+function srgbToCmyk(r, g, b) {
+  const k = 1 - Math.max(r, g, b);
+  if (k >= 1) return { c: 0, m: 0, y: 0, k: 1 };
+  return { c: (1 - r - k) / (1 - k), m: (1 - g - k) / (1 - k), y: (1 - b - k) / (1 - k), k };
 }
 
 function hexToRgb01(hex) {
@@ -159,6 +271,146 @@ function hexToRgb01(hex) {
 
 function rgb255ToHex(r, g, b) {
   return "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+function rgb01ToHex({ r, g, b }) {
+  return rgb255ToHex(clamp01(r) * 255, clamp01(g) * 255, clamp01(b) * 255);
+}
+
+// -------------------------------------------------------------------------
+// Reading a colour someone typed (§9.2: a colour may be entered as a value)
+// -------------------------------------------------------------------------
+
+//: Every notation below is parsed here rather than handed to the browser,
+//: because the browser's answer depends on which colour syntaxes it happens to
+//: support — and a value silently misread is worse than one refused.
+const COLOUR_FUNCTIONS = {
+  rgb: (parts) => ({
+    r: channel(parts[0], 255), g: channel(parts[1], 255), b: channel(parts[2], 255),
+  }),
+  rgba: (parts) => COLOUR_FUNCTIONS.rgb(parts),
+  hsl: (parts) => hslToSrgb(angle(parts[0]), ratio(parts[1]), ratio(parts[2])),
+  hsla: (parts) => COLOUR_FUNCTIONS.hsl(parts),
+  hsv: (parts) => hsvToSrgb(angle(parts[0]), ratio(parts[1]), ratio(parts[2])),
+  hsb: (parts) => COLOUR_FUNCTIONS.hsv(parts),
+  lab: (parts) => labToSrgb(number(parts[0], 100), number(parts[1]), number(parts[2])),
+  lch: (parts) => {
+    const [L, C, h] = [number(parts[0], 100), number(parts[1]), angle(parts[2])];
+    const rad = (h * Math.PI) / 180;
+    return labToSrgb(L, C * Math.cos(rad), C * Math.sin(rad));
+  },
+  oklab: (parts) => oklabToSrgb(number(parts[0], 1), number(parts[1]), number(parts[2])),
+  oklch: (parts) => oklchToSrgb(number(parts[0], 1), number(parts[1]), angle(parts[2])),
+  cmyk: (parts) => cmykToSrgb(ratio(parts[0]), ratio(parts[1]), ratio(parts[2]), ratio(parts[3])),
+  device_cmyk: (parts) => COLOUR_FUNCTIONS.cmyk(parts),
+};
+
+/** A component that may be written as a percentage of `full`, or as a number. */
+function channel(token, full) {
+  if (token === undefined) return NaN;
+  const value = parseFloat(token);
+  if (Number.isNaN(value)) return NaN;
+  return token.includes("%") ? clamp01(value / 100) : clamp01(value / full);
+}
+
+/** A component that is a ratio: `50%` and `0.5` mean the same thing. */
+function ratio(token) {
+  if (token === undefined) return NaN;
+  const value = parseFloat(token);
+  if (Number.isNaN(value)) return NaN;
+  return clamp01(token.includes("%") ? value / 100 : value > 1 ? value / 100 : value);
+}
+
+/** A plain number, where `%` is read against `full` when one is given. */
+function number(token, full) {
+  if (token === undefined) return NaN;
+  const value = parseFloat(token);
+  if (Number.isNaN(value)) return NaN;
+  return token.includes("%") && full !== undefined ? (value / 100) * full : value;
+}
+
+function angle(token) {
+  if (token === undefined) return NaN;
+  const value = parseFloat(token);
+  if (Number.isNaN(value)) return NaN;
+  if (token.includes("grad")) return value * 0.9;
+  if (token.includes("rad")) return (value * 180) / Math.PI;
+  if (token.includes("turn")) return value * 360;
+  return value;
+}
+
+function parseHex(text) {
+  const digits = text.replace(/^#/, "");
+  if (!/^[0-9a-f]+$/i.test(digits)) return null;
+
+  if (digits.length === 3 || digits.length === 4) {
+    const [r, g, b] = [...digits.slice(0, 3)].map((d) => parseInt(d + d, 16) / 255);
+    return { r, g, b };
+  }
+  if (digits.length === 6 || digits.length === 8) {
+    return hexToRgb01("#" + digits.slice(0, 6));
+  }
+  return null;
+}
+
+/** The named CSS colours, resolved by the engine that defines them. */
+function parseNamed(text) {
+  const probe = document.getElementById("color-probe");
+  if (!probe || !/^[a-z]+$/i.test(text)) return null;
+
+  probe.style.color = "";
+  probe.style.color = text;
+  if (!probe.style.color) return null;
+
+  const computed = getComputedStyle(probe).color;
+  const numbers = computed.match(/[\d.]+/g);
+  if (!numbers || numbers.length < 3) return null;
+  return { r: +numbers[0] / 255, g: +numbers[1] / 255, b: +numbers[2] / 255 };
+}
+
+/**
+ * Reads a colour in any notation this tool accepts.
+ *
+ * Returns `{r, g, b}` in 0..1, or null when the text does not name a colour.
+ * Alpha is parsed so that pasting `rgba(…, .5)` is not an error, and then
+ * dropped: a scan is a flat fill, and pretending otherwise would produce an
+ * output colour the result cannot contain.
+ */
+function parseColorInput(text) {
+  const trimmed = String(text || "").trim().toLowerCase();
+  if (!trimmed) return null;
+
+  const call = trimmed.match(/^([a-z-]+)\s*\(([^)]*)\)$/);
+  if (call) {
+    const name = call[1].replace(/-/g, "_");
+    const handler = COLOUR_FUNCTIONS[name];
+    if (!handler) return null;
+
+    // Both `rgb(1, 2, 3)` and `rgb(1 2 3 / 50%)` are current syntax; the alpha
+    // after the slash is parsed off and discarded.
+    const parts = call[2].split("/")[0].trim().split(/[\s,]+/).filter(Boolean);
+    const result = handler(parts);
+    if (!result || [result.r, result.g, result.b].some((v) => Number.isNaN(v))) return null;
+    return { r: clamp01(result.r), g: clamp01(result.g), b: clamp01(result.b) };
+  }
+
+  return parseHex(trimmed) || parseNamed(trimmed);
+}
+
+/** The same colour written every way this tool understands. */
+function colorNotations(rgb) {
+  const hsl = srgbToHsl(rgb.r, rgb.g, rgb.b);
+  const oklch = srgbToOklch(rgb.r, rgb.g, rgb.b);
+  const cmyk = srgbToCmyk(rgb.r, rgb.g, rgb.b);
+  const round = (v, places = 0) => v.toFixed(places);
+
+  return [
+    rgb01ToHex(rgb),
+    `rgb(${round(rgb.r * 255)} ${round(rgb.g * 255)} ${round(rgb.b * 255)})`,
+    `hsl(${round(hsl.h)} ${round(hsl.s * 100)}% ${round(hsl.l * 100)}%)`,
+    `oklch(${round(oklch.L * 100)}% ${round(oklch.C, 3)} ${round(oklch.h)})`,
+    `cmyk(${round(cmyk.c * 100)}% ${round(cmyk.m * 100)}% ${round(cmyk.y * 100)}% ${round(cmyk.k * 100)}%)`,
+  ];
 }
 
 // -------------------------------------------------------------------------
@@ -183,6 +435,45 @@ async function api(path, { method = "GET", body, quiet = false } = {}) {
     throw new Error(message);
   }
   return data;
+}
+
+/**
+ * Posts a bitmap as its own bytes, reporting how much has gone.
+ *
+ * `fetch` cannot report upload progress, and the upload is the one part of
+ * loading a picture whose length is genuinely known — so this stays on
+ * XMLHttpRequest, which can.
+ */
+function uploadImage(blob, { fileName, width, height, deferTrace }, onProgress) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/load_image");
+    request.setRequestHeader("Content-Type", blob.type || "application/octet-stream");
+    request.setRequestHeader("X-Session-Token", sessionToken);
+    request.setRequestHeader("X-File-Name", encodeURIComponent(fileName || "image"));
+    if (width && height) {
+      request.setRequestHeader("X-Client-Width", String(width));
+      request.setRequestHeader("X-Client-Height", String(height));
+    }
+    if (deferTrace) request.setRequestHeader("X-Defer-Trace", "1");
+
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
+    });
+    request.addEventListener("load", () => {
+      let data;
+      try {
+        data = JSON.parse(request.responseText);
+      } catch {
+        data = {};
+      }
+      if (request.status >= 200 && request.status < 300) resolve(data);
+      else reject(new Error(data.error || `That picture could not be loaded (${request.status}).`));
+    });
+    request.addEventListener("error", () => reject(new Error("The picture could not be sent.")));
+    request.addEventListener("abort", () => reject(new Error("Loading was cancelled.")));
+    request.send(blob);
+  });
 }
 
 // -------------------------------------------------------------------------
@@ -217,6 +508,78 @@ function escapeHtml(str) {
 function setView(name) {
   document.body.dataset.view = name;
 }
+
+function haptic(pattern) {
+  if (navigator.vibrate) navigator.vibrate(pattern);
+}
+
+// -------------------------------------------------------------------------
+// Progress
+//
+// Two kinds. Loading a picture has real quantities behind it — bytes decoded,
+// bytes sent — so its bar is the truth. Tracing does not report from inside,
+// so its bar eases towards, but never reaches, done: it says "still working"
+// honestly rather than inventing a percentage.
+// -------------------------------------------------------------------------
+
+const loading = {
+  fill: null,
+  text: null,
+  show(message) {
+    this.fill = document.getElementById("start-loader-fill");
+    this.text = document.getElementById("start-loader-text");
+    document.getElementById("start-loader").hidden = false;
+    this.set(0, message);
+  },
+  set(fraction, message) {
+    if (this.fill) this.fill.style.width = `${Math.round(clamp01(fraction) * 100)}%`;
+    if (message && this.text) this.text.textContent = message;
+    if (message) announce(message);
+  },
+  hide() {
+    document.getElementById("start-loader").hidden = true;
+  },
+};
+
+const tracing = {
+  timer: null,
+  depth: 0,
+  progress: 0,
+  begin() {
+    this.depth += 1;
+    if (this.depth > 1) return;
+
+    const bar = document.getElementById("topline");
+    const fill = document.getElementById("topline-fill");
+    bar.hidden = false;
+    fill.style.opacity = "1";
+    this.progress = 0.06;
+    fill.style.width = "6%";
+
+    // Each tick closes some of the remaining distance, so the bar always moves
+    // and never claims to be finished before the answer is back.
+    this.timer = setInterval(() => {
+      this.progress += (0.94 - this.progress) * 0.08;
+      fill.style.width = `${(this.progress * 100).toFixed(1)}%`;
+    }, 180);
+  },
+  end() {
+    this.depth = Math.max(0, this.depth - 1);
+    if (this.depth) return;
+
+    clearInterval(this.timer);
+    const bar = document.getElementById("topline");
+    const fill = document.getElementById("topline-fill");
+    fill.style.width = "100%";
+    setTimeout(() => {
+      fill.style.opacity = "0";
+      setTimeout(() => {
+        bar.hidden = true;
+        fill.style.width = "0%";
+      }, 300);
+    }, 140);
+  },
+};
 
 // -------------------------------------------------------------------------
 // Boot
@@ -263,29 +626,36 @@ async function boot() {
 /** Everything that must happen once a bitmap exists, in either host. */
 async function enterWorkspace(sourceChanged) {
   setView("workspace");
-  document.getElementById("subject-name").textContent = state.session.imageName || "";
+  renderSubject();
   renderResizeNotice();
   fitView();
 
-  const run = await api("/api/update_settings", { method: "POST", body: { settings: state.settings } });
-  applyServerResponse(run);
+  await pushSettings();
 
   if (sourceChanged) {
-    document.getElementById("source-changed-badge").hidden = false;
     openDialog(document.getElementById("dialog-source-changed"));
   }
 }
 
 function applyCommitWording() {
   const wording = COMMIT_WORDING[state.session.commitTarget] || COMMIT_WORDING.download;
-  for (const id of ["btn-commit", "btn-commit-bottom"]) {
-    document.getElementById(id).textContent = wording.action;
-  }
+  const commit = document.getElementById("btn-commit");
+  document.getElementById("btn-commit-text").textContent = wording.action;
+  commit.setAttribute("aria-label", wording.action);
+  commit.title = wording.action;
+
   // A session that owns no file has nothing to discard on the way out, so the
   // destructive-sounding Cancel is replaced by a plain close.
   const isDownload = state.session.commitTarget === "download";
-  document.getElementById("btn-cancel-bottom").textContent = isDownload ? "Close" : "Cancel";
+  document.getElementById("btn-cancel-text").textContent = isDownload ? "Close" : "Cancel and discard";
   document.getElementById("btn-change-image").hidden = !state.session.canLoadImage;
+}
+
+function renderSubject() {
+  document.getElementById("subject-name").textContent = state.session.imageName || "Untitled";
+  const { imageWidth, imageHeight } = state.session;
+  document.getElementById("subject-size").textContent =
+    imageWidth && imageHeight ? `${imageWidth}×${imageHeight}` : "";
 }
 
 function renderResizeNotice() {
@@ -297,7 +667,17 @@ function renderResizeNotice() {
 
 // -------------------------------------------------------------------------
 // Loading a picture (§9.4.2)
+//
+// The picture is on screen before the colours are, because decoding a bitmap
+// is fast and tracing it is not, and a blank screen for the length of both is
+// the difference between a tool that feels quick and one that feels broken.
 // -------------------------------------------------------------------------
+
+//: Types the server will decode. Anything else — a HEIC straight off a phone,
+//: say — is re-encoded here first, using whatever the browser can decode.
+const SERVER_TYPES = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff", "image/webp",
+]);
 
 function bindStartScreen() {
   const fileInput = document.getElementById("file-input");
@@ -322,8 +702,8 @@ function bindStartScreen() {
     handleChosenFile(e.dataTransfer.files && e.dataTransfer.files[0]);
   });
 
-  // A drop anywhere else on the start screen would otherwise navigate the tab
-  // to the file, which silently loses the session.
+  // A drop anywhere else would otherwise navigate the tab to the file, which
+  // silently loses the session.
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => e.preventDefault());
 }
@@ -331,62 +711,132 @@ function bindStartScreen() {
 async function handleChosenFile(file) {
   if (!file) return;
   clearAlert();
-
-  const busy = document.getElementById("start-busy");
-  busy.hidden = false;
-  announce("Reading your picture.");
+  setView("start");
+  loading.show("Reading your picture…");
 
   try {
-    const dataUri = await readFileAsDataUri(file);
-    const data = await api("/api/load_image", {
-      method: "POST",
-      body: { dataUri, fileName: file.name },
-    });
+    const prepared = await prepareUpload(file);
+    loading.set(0.3, "Sending it over…");
+
+    const data = await uploadImage(
+      prepared.blob,
+      {
+        fileName: file.name,
+        width: prepared.width,
+        height: prepared.height,
+        deferTrace: true,
+      },
+      (fraction) => loading.set(0.3 + fraction * 0.5)
+    );
+
+    loading.set(0.85, "Opening the workspace…");
 
     state.session = data;
     state.settings = data.settings;
-    state.scanResults = data.scanResults || [];
-    state.claimStats = data.claimStats || {};
-    state.warnings = data.warnings || [];
+    state.scanResults = [];
+    state.claimStats = {};
+    state.warnings = [];
+    state.history = { past: [], future: [] };
 
-    await adoptSourceImage(data.dataUri);
+    if (data.usesClientBitmap && prepared.bitmap) {
+      adoptBitmap(prepared.bitmap);
+    } else {
+      await adoptSourceImage(data.dataUri || (await api("/api/preview_source")).dataUri);
+    }
+
     applyCommitWording();
-    setView("workspace");
-    document.getElementById("subject-name").textContent = data.imageName || "";
-    renderResizeNotice();
-    fitView();
-    renderAll();
+    loading.set(1);
+    loading.hide();
 
+    await enterWorkspace(false);
     announce(
-      `Loaded ${data.imageName}, ${data.imageWidth} by ${data.imageHeight} pixels. ` +
+      `${data.imageName} is open, ${data.imageWidth} by ${data.imageHeight} pixels. ` +
       `${state.settings.palette.entries.length} colours were chosen for you.`
     );
   } catch (err) {
+    loading.hide();
     showAlert(err.message);
   } finally {
-    busy.hidden = true;
     document.getElementById("file-input").value = "";
     document.getElementById("camera-input").value = "";
   }
 }
 
-function readFileAsDataUri(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("That file could not be read."));
-    reader.readAsDataURL(file);
-  });
+/**
+ * Gets the chosen file ready to send.
+ *
+ * Two things are worth doing here rather than on the server. A picture larger
+ * than the working budget is going to be scaled down anyway, and scaling it
+ * first means the oversized version is never encoded, never transferred and
+ * never decoded. And a file the server cannot read — a phone's HEIC — becomes
+ * a PNG the moment the browser proves it can decode it, instead of an error.
+ */
+async function prepareUpload(file) {
+  const budget = (state.session && state.session.maxWorkingPixels) || 4000000;
+
+  if (!window.createImageBitmap) {
+    return { blob: file, width: 0, height: 0, bitmap: null };
+  }
+
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    // Nothing here can decode it; the server's decoder gets its turn.
+    return { blob: file, width: 0, height: 0, bitmap: null };
+  }
+
+  const pixels = bitmap.width * bitmap.height;
+  const needsResize = pixels > budget;
+  const needsReencode = !SERVER_TYPES.has(file.type);
+
+  if (!needsResize && !needsReencode) {
+    return { blob: file, width: bitmap.width, height: bitmap.height, bitmap };
+  }
+
+  loading.set(0.15, needsResize ? "Scaling it down to size…" : "Converting it…");
+
+  let output = bitmap;
+  if (needsResize) {
+    const scale = Math.sqrt(budget / pixels);
+    output = await createImageBitmap(bitmap, {
+      resizeWidth: Math.max(1, Math.round(bitmap.width * scale)),
+      resizeHeight: Math.max(1, Math.round(bitmap.height * scale)),
+      resizeQuality: "high",
+    });
+    bitmap.close();
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = output.width;
+  canvas.height = output.height;
+  canvas.getContext("2d").drawImage(output, 0, 0);
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  return { blob, width: output.width, height: output.height, bitmap: output };
 }
 
 /**
- * Decodes the preview PNG and caches its pixels.
+ * Takes a bitmap the browser already holds as the picture on screen.
  *
  * The magnifier needs a colour for every pointer move; asking the server each
  * time would put a network round trip inside a drag. The pixels are read once
  * here instead, and the committed sample still comes from the server so the
  * pipeline's value stays authoritative.
  */
+function adoptBitmap(bitmap) {
+  state.sourceImage = bitmap;
+  state.view.fitted = false;
+
+  const scratch = document.createElement("canvas");
+  scratch.width = bitmap.width;
+  scratch.height = bitmap.height;
+  const ctx = scratch.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  state.sourcePixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+}
+
+/** The same, for a picture the server had to send us. */
 async function adoptSourceImage(dataUri) {
   const image = await new Promise((resolve, reject) => {
     const img = new Image();
@@ -394,16 +844,7 @@ async function adoptSourceImage(dataUri) {
     img.onerror = () => reject(new Error("The picture preview could not be displayed."));
     img.src = dataUri;
   });
-
-  state.sourceImage = image;
-  state.view.fitted = false;
-
-  const scratch = document.createElement("canvas");
-  scratch.width = image.width;
-  scratch.height = image.height;
-  const ctx = scratch.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(image, 0, 0);
-  state.sourcePixels = ctx.getImageData(0, 0, image.width, image.height);
+  adoptBitmap(image);
 }
 
 // -------------------------------------------------------------------------
@@ -502,9 +943,7 @@ function renderCanvas() {
   if (state.previewMode === "result") {
     for (const scan of state.scanResults) {
       ctx.fillStyle = scan.color;
-      for (const d of scan.pathDatas) {
-        ctx.fill(new Path2D(d), scan.fillRule || "evenodd");
-      }
+      ctx.fill(scanPath(scan), scan.fillRule || "evenodd");
     }
   }
 
@@ -512,16 +951,14 @@ function renderCanvas() {
     // §9.2: colour must not be the only way to tell scans apart, so each
     // claimed region is outlined as well as tinted.
     for (const scan of state.scanResults) {
+      const path = scanPath(scan);
       ctx.fillStyle = scan.color;
       ctx.globalAlpha = 0.55;
       ctx.strokeStyle = contrastingStroke(scan.color);
       ctx.lineWidth = 1.5 / state.view.scale;
       ctx.setLineDash([4 / state.view.scale, 3 / state.view.scale]);
-      for (const d of scan.pathDatas) {
-        const path = new Path2D(d);
-        ctx.fill(path, scan.fillRule || "evenodd");
-        ctx.stroke(path);
-      }
+      ctx.fill(path, scan.fillRule || "evenodd");
+      ctx.stroke(path);
     }
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
@@ -530,6 +967,19 @@ function renderCanvas() {
   ctx.restore();
 
   if (state.target) drawTargetMarker(ctx);
+}
+
+/**
+ * One path per scan, holding every subpath the backend returned.
+ *
+ * A fill rule decides what is inside by counting the subpaths a ray crosses,
+ * which only works when they belong to the same path. Filling them one at a
+ * time paints each hole back in as a solid shape.
+ */
+function scanPath(scan) {
+  const path = new Path2D();
+  for (const d of scan.pathDatas) path.addPath(new Path2D(d));
+  return path;
 }
 
 function drawTargetMarker(ctx) {
@@ -576,7 +1026,7 @@ function sampleLocally(x, y, mode) {
     }
   }
 
-  if (mode === "5x5_median") return rgb255ToHex(...medianOf(window));
+  if (mode === "5x5_median") return rgb255ToHex(...representativeOf(window));
 
   const buckets = new Map();
   for (const pixel of window) {
@@ -588,15 +1038,27 @@ function sampleLocally(x, y, mode) {
   for (const group of buckets.values()) {
     if (group.length > winner.length) winner = group;
   }
-  return rgb255ToHex(...medianOf(winner));
+  return rgb255ToHex(...representativeOf(winner));
 }
 
-function medianOf(pixels) {
-  return [0, 1, 2].map((channel) => {
+/** The pixel of `pixels` closest to their per-channel median — a real colour. */
+function representativeOf(pixels) {
+  const median = [0, 1, 2].map((channel) => {
     const values = pixels.map((p) => p[channel]).sort((a, b) => a - b);
     const middle = values.length >> 1;
     return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
   });
+
+  let best = pixels[0];
+  let bestDistance = Infinity;
+  for (const pixel of pixels) {
+    const distance = (pixel[0] - median[0]) ** 2 + (pixel[1] - median[1]) ** 2 + (pixel[2] - median[2]) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = pixel;
+    }
+  }
+  return best;
 }
 
 // -------------------------------------------------------------------------
@@ -609,11 +1071,11 @@ const LOUPE_SOURCE_PIXELS = 13;
 
 function showLoupe(clientX, clientY) {
   const loupe = document.getElementById("loupe");
-  const { left, top, width, height } = viewportSize();
+  const { left, top, width } = viewportSize();
 
   // Sit the magnifier above the contact point, where a fingertip is not.
-  const x = Math.max(70, Math.min(width - 70, clientX - left));
-  const y = Math.max(150, clientY - top - 18);
+  const x = Math.max(80, Math.min(width - 80, clientX - left));
+  const y = Math.max(160, clientY - top - 20);
   loupe.style.left = `${x}px`;
   loupe.style.top = `${y}px`;
   loupe.hidden = false;
@@ -670,16 +1132,13 @@ function setPicking(on) {
   state.picking = on;
   document.getElementById("pickbar").hidden = !on;
   document.getElementById("viewport").classList.toggle("is-picking", on);
-  document.getElementById("btn-pick").textContent =
-    on ? "Stop picking" : "Pick a colour from the picture";
+  const button = document.getElementById("btn-pick");
+  button.classList.toggle("is-on", on);
+  button.setAttribute("aria-pressed", String(on));
 
   if (on) {
     // Aim at the middle of what is on screen, so a keyboard user has somewhere
     // to start from without ever touching a pointer.
-    // On a phone the controls scroll and the picture does not follow, so the
-    // button that starts picking has to bring its subject back into view.
-    document.getElementById("stage").scrollIntoView({ block: "start", behavior: "smooth" });
-
     const { left, top, width, height } = viewportSize();
     state.target = clampToImage(screenToImage(left + width / 2, top + height / 2));
     document.getElementById("preview-canvas").focus({ preventScroll: true });
@@ -703,8 +1162,8 @@ function bindStageGestures() {
 
   viewport.addEventListener("pointerdown", (e) => {
     if (!state.sourceImage) return;
-    // The zoom controls sit inside the viewport. Capturing the pointer for a
-    // pan would retarget the follow-up click away from the button that was
+    // The floating controls sit inside the viewport. Capturing the pointer for
+    // a pan would retarget the follow-up click away from the button that was
     // actually pressed, so those presses are left alone.
     if (e.target.closest("button")) return;
 
@@ -751,11 +1210,9 @@ function bindStageGestures() {
       const wasPicking = gesture && gesture.type === "pick";
       pointers.delete(e.pointerId);
 
-      if (wasPicking && eventName === "pointerup") {
+      if (wasPicking) {
         hideLoupe();
-        commitSample();
-      } else if (wasPicking) {
-        hideLoupe();
+        if (eventName === "pointerup") commitSample();
       }
 
       // Lifting one finger of a pinch leaves the other one panning.
@@ -875,9 +1332,25 @@ function findEntry(id) {
 }
 
 function entryHex(entry) {
+  return resolvedHex(entry) || "#888888";
+}
+
+/**
+ * The entry's colour, or null when it does not have one yet.
+ *
+ * An automatic entry with nothing left to claim never gets a colour resolved
+ * for it. Showing the placeholder grey as though it were a swatch would be a
+ * colour the picture does not contain, standing in a palette that promises
+ * every colour in it is one that does.
+ */
+function resolvedHex(entry) {
   return (entry.output && entry.output.color && entry.output.color.srgb)
     || (entry.sourceAnchor && entry.sourceAnchor.srgb)
-    || "#888888";
+    || null;
+}
+
+function scanFor(entryId) {
+  return state.scanResults.find((s) => s.entryId === entryId);
 }
 
 /**
@@ -889,7 +1362,7 @@ function entryHex(entry) {
  * as "this colour found nothing" rather than "this colour isn't drawn".
  */
 function coverageOf(entryId) {
-  const scan = state.scanResults.find((s) => s.entryId === entryId);
+  const scan = scanFor(entryId);
   if (scan && typeof scan.coveragePercent === "number") return scan.coveragePercent;
   const claimed = state.claimStats[entryId];
   return typeof claimed === "number" ? claimed : null;
@@ -943,20 +1416,23 @@ function pinEntryTo(entry, hex, chroma) {
 }
 
 /**
- * Adds a picked colour.
+ * Adds a colour to the palette.
  *
- * Picking is an additive act: if every slot is already spoken for, the palette
+ * Adding is an additive act: if every slot is already spoken for, the palette
  * grows rather than quietly overwriting a colour the user chose earlier.
  */
-async function addPickedColour(hex, r, g, b) {
+async function addPinnedColour(hex, { name, announceAs } = {}) {
   const entries = state.settings.palette.entries;
   const existing = entries.find((entry) => entry.kind === "pinned"
     && (entry.sourceAnchor || {}).srgb === hex);
   if (existing) {
     announce(`${hex} is already in the palette as ${existing.name}.`);
-    return;
+    return existing;
   }
 
+  pushHistory();
+
+  const { r, g, b } = hexToRgb01(hex);
   const { C } = srgbToOklch(r, g, b);
   let target = entries.find((entry) => entry.kind === "automatic");
 
@@ -968,10 +1444,51 @@ async function addPickedColour(hex, r, g, b) {
   }
 
   pinEntryTo(target, hex, C);
-  target.name = `Picked ${hex}`;
+  target.name = name || `Picked ${hex}`;
 
   await pushSettings();
-  announce(`Added ${hex}. It now covers ${coverageText(target.id)}.`);
+  announce(`${announceAs || `Added ${hex}`}. It now covers ${coverageText(target.id)}.`);
+  return target;
+}
+
+function addPickedColour(hex) {
+  return addPinnedColour(hex);
+}
+
+// -------------------------------------------------------------------------
+// Undo (§9.2 does not require it; every tool that edits by trial does)
+// -------------------------------------------------------------------------
+
+function snapshot() {
+  return JSON.parse(JSON.stringify(state.settings));
+}
+
+/**
+ * Records a settings state to come back to.
+ *
+ * `before` lets a caller that has to look at the settings before deciding
+ * whether to change them take its snapshot first, so a decision not to change
+ * anything does not leave an undo step that undoes nothing.
+ */
+function pushHistory(before) {
+  state.history.past.push(before || snapshot());
+  if (state.history.past.length > HISTORY_LIMIT) state.history.past.shift();
+  state.history.future.length = 0;
+  renderHistoryButtons();
+}
+
+async function stepHistory(from, to) {
+  if (!from.length) return;
+  to.push(snapshot());
+  state.settings = from.pop();
+  renderHistoryButtons();
+  await pushSettings();
+  announce(to === state.history.future ? "Undone." : "Redone.");
+}
+
+function renderHistoryButtons() {
+  document.getElementById("btn-undo").disabled = !state.history.past.length;
+  document.getElementById("btn-redo").disabled = !state.history.future.length;
 }
 
 // -------------------------------------------------------------------------
@@ -987,16 +1504,56 @@ function applyServerResponse(data) {
   renderAll();
 }
 
+//: One trace at a time. Dragging a slider produces a change per step, and
+//: queueing a full pipeline run behind each of them would spend minutes
+//: computing results nobody will ever see, so only the newest is sent on.
+let inFlight = null;
+let queued = false;
+
 async function pushSettings() {
-  const data = await api("/api/update_settings", {
-    method: "POST",
-    body: { settings: state.settings },
-  });
-  applyServerResponse(data);
+  if (inFlight) {
+    queued = true;
+    return inFlight;
+  }
+
+  try {
+    do {
+      queued = false;
+      inFlight = runPush();
+      await inFlight;
+    } while (queued);
+  } finally {
+    inFlight = null;
+    queued = false;
+  }
+}
+
+async function runPush() {
+  // What is being sent, as it was when it was sent. A change made while the
+  // trace is running would otherwise be overwritten by the answer to the
+  // question that was asked before it — the run in progress knows nothing
+  // about it, and its reply carries the settings as they were.
+  const sent = JSON.stringify(state.settings);
+
+  tracing.begin();
+  try {
+    const data = await api("/api/update_settings", { method: "POST", body: { settings: state.settings } });
+
+    clearAlert();
+    if (JSON.stringify(state.settings) === sent) {
+      state.settings = data.settings;
+    }
+    state.scanResults = data.scanResults || [];
+    state.claimStats = data.claimStats || {};
+    state.warnings = data.warnings || [];
+    renderAll();
+  } finally {
+    tracing.end();
+  }
 }
 
 // -------------------------------------------------------------------------
-// Rendering the panel
+// Rendering
 // -------------------------------------------------------------------------
 
 /**
@@ -1010,7 +1567,7 @@ function withFocusPreserved(render) {
   const active = document.activeElement;
   const id = active && active.id;
   const caret = active && "selectionStart" in active ? active.selectionStart : null;
-  const scrolled = active && active.closest ? active.closest(".sheet-body, .panel") : null;
+  const scrolled = active && active.closest ? active.closest(".sheet-body, .palette-scroller") : null;
   const scrollTop = scrolled ? scrolled.scrollTop : null;
 
   render();
@@ -1035,28 +1592,16 @@ function renderAll() {
   });
   renderCounts();
   renderDestinationSelection();
-  renderAdvancedControls();
+  renderSetupControls();
   renderWarnings();
   renderModeCaption();
+  renderBackdropButton();
+  renderHistoryButtons();
   renderCanvas();
 }
 
 function renderCounts() {
-  const entries = state.settings.palette.entries;
-  const pinned = entries.filter((e) => e.kind === "pinned").length;
-  const automatic = entries.length - pinned;
-
-  document.getElementById("colour-count-badge").textContent =
-    `${entries.length} ${entries.length === 1 ? "colour" : "colours"}`;
-
-  document.getElementById("colours-result").textContent = pinned
-    ? `${pinned} picked by you, ${automatic} chosen for you.`
-    : `All ${automatic} chosen for you. Pick any that must come out exactly right.`;
-
   document.getElementById("input-scans").value = state.settings.scanCount;
-  document.getElementById("scans-result").textContent =
-    `Your picture will be reduced to ${state.settings.scanCount} flat ` +
-    `${state.settings.scanCount === 1 ? "colour" : "colours"}.`;
 }
 
 function renderSwatches() {
@@ -1064,52 +1609,133 @@ function renderSwatches() {
   const entries = state.settings.palette.entries;
   const backgroundId = state.settings.palette.backgroundEntryId;
 
-  list.innerHTML = entries.map((entry) => {
-    const hex = entryHex(entry);
-    const warnings = warningsForEntry(entry.id);
-    const facts = [
-      `<span class="swatch-hex">${escapeHtml(hex)}</span>`,
-      `<span>${coverageText(entry.id)}</span>`,
-      entry.kind === "pinned" ? `<span class="swatch-flag">Picked</span>` : "",
-      backgroundId === entry.id ? `<span class="swatch-flag">Backdrop</span>` : "",
-      entry.enabled === false ? `<span>Left out</span>` : "",
-      warnings.length ? `<span class="swatch-warn">⚠ ${warnings.length} warning${warnings.length > 1 ? "s" : ""}</span>` : "",
-    ].filter(Boolean).join("");
+  // Layers the pipeline invented — a backdrop-coloured shape lifted in front of
+  // what encloses it — are shown so the result is never a surprise, but they
+  // carry no controls: there is nothing in the settings for them to write to.
+  const derived = state.scanResults.filter((scan) => scan.derived);
+  const localWarnings = perScanWarnings();
 
+  const swatch = (options) => {
+    const coverage = Math.max(0, Math.min(100, options.coverage || 0));
+    const chip = options.hex
+      ? `<span class="swatch-chip" style="background-color:${escapeHtml(options.hex)}" aria-hidden="true"></span>`
+      : `<span class="swatch-chip is-empty" aria-hidden="true"></span>`;
     return `
-      <li draggable="true" data-entry-id="${entry.id}">
-        <button type="button" class="swatch-row" data-open-scan="${entry.id}"
-                data-disabled="${entry.enabled === false}">
-          <span class="swatch-chip" style="background-color:${escapeHtml(hex)}" aria-hidden="true"></span>
-          <span class="swatch-text">
-            <span class="swatch-name">${escapeHtml(entry.name)}</span>
-            <span class="swatch-facts">${facts}</span>
+      <li>
+        <button type="button" class="swatch ${options.className || ""}"
+                data-entry-id="${escapeHtml(options.id)}"
+                ${options.draggable ? 'data-draggable="true"' : ""}
+                data-disabled="${!!options.disabled}"
+                aria-label="${escapeHtml(options.aria)}">
+          ${chip}
+          <span class="swatch-flags" aria-hidden="true">${options.flags || ""}</span>
+          <span class="swatch-name">${escapeHtml(options.name)}</span>
+          <span class="swatch-meta">
+            <span class="swatch-hex">${escapeHtml(options.hex || "nothing left")}</span>
+            <span class="swatch-bar"><span style="width:${coverage.toFixed(1)}%"></span></span>
           </span>
-          <span class="swatch-go" aria-hidden="true">›</span>
         </button>
       </li>
     `;
-  }).join("");
+  };
+
+  const flagIcon = (icon) => `<svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg>`;
+
+  list.innerHTML = entries.map((entry, index) => {
+    const scan = scanFor(entry.id);
+    const flags = [
+      entry.kind === "pinned" ? flagIcon("i-lock") : "",
+      backgroundId === entry.id ? flagIcon("i-backdrop") : "",
+      entry.enabled === false ? flagIcon("i-eye-off") : "",
+      (localWarnings.get(entry.id) || []).length ? flagIcon("i-warn") : "",
+    ].join("");
+
+    const aria = [
+      entry.name,
+      resolvedHex(entry) || "no colour of its own yet",
+      coverageText(entry.id),
+      entry.kind === "pinned" ? "picked by you" : "chosen for you",
+      backgroundId === entry.id ? "the backdrop" : "",
+      entry.enabled === false ? "left out" : "",
+      `layer ${index + 1} of ${entries.length}`,
+    ].filter(Boolean).join(", ");
+
+    return swatch({
+      id: entry.id,
+      hex: resolvedHex(entry),
+      name: entry.name,
+      coverage: coverageOf(entry.id) || 0,
+      disabled: entry.enabled === false,
+      draggable: true,
+      className: backgroundId === entry.id ? "is-background" : "",
+      flags,
+      aria,
+    });
+  }).join("") + derived.map((scan) => swatch({
+    id: scan.entryId,
+    hex: scan.color,
+    name: scan.name,
+    coverage: scan.coveragePercent,
+    className: "is-derived",
+    flags: flagIcon("i-wand"),
+    aria: `${scan.name}, ${scan.color}, added automatically in front`,
+  })).join("") + `
+    <li>
+      <button type="button" class="swatch swatch-add" id="btn-add-swatch"
+              aria-label="Add a colour" title="Add a colour">
+        <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+      </button>
+    </li>
+  `;
 }
 
-function warningsForEntry(entryId) {
-  const scan = state.scanResults.find((s) => s.entryId === entryId);
-  return scan ? scan.warnings || [] : [];
+/**
+ * The warnings that are genuinely about one scan.
+ *
+ * A backend limitation produces the identical sentence on every scan at once.
+ * Flagging all four colours for it says nothing about any of them, and turns
+ * the one flag that would mean something into wallpaper.
+ */
+function perScanWarnings() {
+  const scans = state.scanResults;
+  const counts = new Map();
+  for (const scan of scans) {
+    for (const message of scan.warnings || []) {
+      counts.set(message, (counts.get(message) || 0) + 1);
+    }
+  }
+
+  const local = new Map();
+  for (const scan of scans) {
+    local.set(scan.entryId, (scan.warnings || []).filter(
+      (message) => counts.get(message) < scans.length
+    ));
+  }
+  return local;
 }
+
 
 function renderWarnings() {
-  const el = document.getElementById("warnings-summary");
   // One backend limitation produces the same sentence once per scan. Repeating
-  // it four times makes the panel look broken and says nothing extra; the
+  // it four times makes the interface look broken and says nothing extra; the
   // per-colour sheets still show which scans are affected.
   const unique = [...new Set(state.warnings.map((w) => w.message || String(w)))];
 
-  el.hidden = unique.length === 0;
-  el.textContent = unique.join(" · ");
+  const summary = document.getElementById("warnings-summary");
+  summary.hidden = unique.length === 0;
+  summary.textContent = unique.join(" · ");
+
+  document.getElementById("btn-warnings").hidden = unique.length === 0;
+  document.getElementById("warning-list").innerHTML = unique.map((message) => `
+    <li><svg class="icon" aria-hidden="true"><use href="#i-warn"/></svg><span>${escapeHtml(message)}</span></li>
+  `).join("");
 }
 
 function renderModeCaption() {
   document.getElementById("mode-caption").textContent = MODE_CAPTIONS[state.previewMode] || "";
+  for (const button of document.querySelectorAll("[data-mode]")) {
+    button.setAttribute("aria-checked", String(button.dataset.mode === state.previewMode));
+  }
 }
 
 function renderDestinationChoices() {
@@ -1140,7 +1766,7 @@ function renderDestinationSelection() {
   document.getElementById("destination-result").textContent = wording ? wording.why : "";
 }
 
-function renderAdvancedControls() {
+function renderSetupControls() {
   const settings = state.settings;
 
   document.getElementById("select-backend").value = settings.backend.preferredBackendId;
@@ -1160,13 +1786,32 @@ function renderAdvancedControls() {
   // colour exists, so they are not on screen until one does.
   document.getElementById("background-detail").hidden = !currentBg;
 
-  const matching = settings.palette.backgroundMatching || "all_matching";
-  const matchingInput = document.querySelector(`input[name="bg-matching"][value="${matching}"]`);
-  if (matchingInput) matchingInput.checked = true;
+  const check = (name, value) => {
+    const input = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (input) input.checked = true;
+  };
+  check("bg-matching", settings.palette.backgroundMatching || "all_matching");
+  check("bg-output", settings.output.backgroundOutput || "keep_paths");
+  check("bg-foreground", settings.palette.backgroundForegroundPolicy || "hole_or_layer");
 
-  const output = settings.output.backgroundOutput || "keep_paths";
-  const outputInput = document.querySelector(`input[name="bg-output"][value="${output}"]`);
-  if (outputInput) outputInput.checked = true;
+  // The hole-or-layer question only arises when the matching mode can leave
+  // backdrop-coloured pixels out of the backdrop in the first place.
+  document.getElementById("background-foreground-set").hidden =
+    (settings.palette.backgroundMatching || "all_matching") === "all_matching";
+}
+
+function renderBackdropButton() {
+  const button = document.getElementById("btn-auto-backdrop");
+  const current = state.settings.palette.backgroundEntryId;
+  const entry = current && findEntry(current);
+
+  button.classList.toggle("is-on", !!entry);
+  button.setAttribute("aria-pressed", String(!!entry));
+  const wording = entry
+    ? `${entry.name} is the backdrop. Tap to clear it.`
+    : "Use the colour around the edge as the backdrop";
+  button.setAttribute("aria-label", wording);
+  button.title = wording;
 }
 
 // -------------------------------------------------------------------------
@@ -1177,6 +1822,15 @@ function openScanSheet(entryId) {
   state.openScanId = entryId;
   renderScanSheet(entryId);
   openDialog(document.getElementById("sheet-scan"));
+}
+
+function iconButton({ action, icon, text, extra = "", className = "btn-secondary" }) {
+  return `
+    <button type="button" class="btn ${className}" data-action="${action}" ${extra}>
+      <svg class="icon" aria-hidden="true"><use href="#${icon}"/></svg>
+      <span>${escapeHtml(text)}</span>
+    </button>
+  `;
 }
 
 function renderScanSheet(entryId) {
@@ -1190,7 +1844,9 @@ function renderScanSheet(entryId) {
   const index = entries.indexOf(entry);
   const hex = entryHex(entry);
   const isBackground = state.settings.palette.backgroundEntryId === entry.id;
-  const warnings = warningsForEntry(entry.id);
+  const scan = scanFor(entry.id);
+  const warnings = perScanWarnings().get(entry.id) || [];
+  const border = scan ? scan.borderSharePercent : null;
 
   document.getElementById("sheet-scan-title").textContent = entry.name;
   document.getElementById("sheet-scan-body").innerHTML = `
@@ -1199,39 +1855,57 @@ function renderScanSheet(entryId) {
       <span class="scan-hero-text">
         <span class="scan-hero-hex">${escapeHtml(hex)}</span>
         <span class="scan-hero-fact">
-          ${entry.kind === "pinned" ? "You picked this. It comes out exactly as shown." : "Chosen for you from what was left over."}
+          ${entry.kind === "pinned" ? "You chose this. It comes out exactly as shown." : "Chosen for you from what was left over."}
         </span>
-        <span class="scan-hero-fact">Covers ${coverageText(entry.id)}.</span>
+        <span class="scan-hero-fact">Covers ${coverageText(entry.id)}${
+          typeof border === "number" && border >= 40 ? `, and ${Math.round(border)}% of the frame` : ""
+        }.</span>
       </span>
     </div>
 
     ${warnings.length ? `<p class="scan-warning">${escapeHtml(warnings.join(" "))}</p>` : ""}
+
+    <div class="scan-actions">
+      ${iconButton({ action: "edit-colour", icon: "i-dropper", text: "Change" })}
+      ${iconButton({
+        action: "toggle-background", icon: "i-backdrop",
+        text: isBackground ? "Not backdrop" : "Backdrop",
+        className: isBackground ? "btn-secondary is-on btn-accent" : "btn-secondary",
+      })}
+      ${iconButton({
+        action: "toggle-enabled",
+        icon: entry.enabled === false ? "i-eye-off" : "i-eye",
+        text: entry.enabled === false ? "Left out" : "Included",
+      })}
+      ${iconButton({
+        action: "remove", icon: "i-trash", text: "Remove",
+        className: "btn-danger", extra: entries.length <= 1 ? "disabled" : "",
+      })}
+    </div>
 
     <div class="field">
       <label for="scan-name">Call it</label>
       <input type="text" id="scan-name" value="${escapeHtml(entry.name)}" data-field="name">
     </div>
 
-    <div class="switch-row">
-      <label for="scan-enabled">Include this colour in the result</label>
-      <input type="checkbox" id="scan-enabled" data-field="enabled" ${entry.enabled !== false ? "checked" : ""}>
-    </div>
-
     <div class="field">
       <span class="field-help">Layer ${index + 1} of ${entries.length}, counting from the back.</span>
-      <div class="order-row">
+      <div class="scan-actions">
         <button type="button" class="btn btn-secondary" data-move="-1" ${index === 0 ? "disabled" : ""}>
-          Move further back
+          <svg class="icon" aria-hidden="true"><use href="#i-send-back"/></svg>
+          <span>Further back</span>
         </button>
         <button type="button" class="btn btn-secondary" data-move="1" ${index === entries.length - 1 ? "disabled" : ""}>
-          Bring further forward
+          <svg class="icon" aria-hidden="true"><use href="#i-bring-front"/></svg>
+          <span>Further forward</span>
         </button>
       </div>
     </div>
 
     ${entry.kind === "automatic" ? `
       <button type="button" class="btn btn-accent btn-wide" data-action="lock-exact">
-        Lock this colour in exactly
+        <svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>
+        <span>Lock this colour in</span>
       </button>
       <p class="card-hint">
         Chosen colours shift when you change anything else. Locking keeps this
@@ -1240,7 +1914,7 @@ function renderScanSheet(entryId) {
     ` : renderReachControls(entry)}
 
     ${isBackground ? `
-      <p class="card-hint">This is the backdrop colour. Its role is fixed — change it under Fine-tuning.</p>
+      <p class="card-hint">This is the backdrop colour. Its role is fixed — change how it behaves under Setup.</p>
     ` : `
       <div class="field">
         <label for="scan-role">What this colour is for</label>
@@ -1257,11 +1931,6 @@ function renderScanSheet(entryId) {
       <summary>Shape cleanup for this colour</summary>
       <div>${renderTraceProfileControls(entry)}</div>
     </details>
-
-    <button type="button" class="btn btn-menu btn-menu-quiet" data-action="remove"
-            ${entries.length <= 1 ? "disabled" : ""}>
-      Remove this colour
-    </button>
   `;
 }
 
@@ -1451,6 +2120,7 @@ function bindScanSheet() {
 
     const move = e.target.closest("[data-move]");
     if (move) {
+      pushHistory();
       reorderEntry(entry.id, parseInt(move.dataset.move, 10));
       await pushSettings();
       announce(`${entry.name} moved.`);
@@ -1460,28 +2130,47 @@ function bindScanSheet() {
     const action = e.target.closest("[data-action]");
     if (!action) return;
 
-    if (action.dataset.action === "lock-exact") {
-      const hex = entryHex(entry);
-      const { r, g, b } = hexToRgb01(hex);
-      pinEntryTo(entry, hex, srgbToOklch(r, g, b).C);
-      await pushSettings();
-      announce(`${entry.name} is locked to ${hex}.`);
-    }
-
-    if (action.dataset.action === "remove") {
-      const entries = state.settings.palette.entries;
-      const index = entries.indexOf(entry);
-      entries.splice(index, 1);
-      state.settings.palette.layerOrder =
-        state.settings.palette.layerOrder.filter((id) => id !== entry.id);
-      if (state.settings.palette.backgroundEntryId === entry.id) {
-        state.settings.palette.backgroundEntryId = null;
+    switch (action.dataset.action) {
+      case "lock-exact": {
+        pushHistory();
+        const hex = entryHex(entry);
+        const { r, g, b } = hexToRgb01(hex);
+        pinEntryTo(entry, hex, srgbToOklch(r, g, b).C);
+        await pushSettings();
+        announce(`${entry.name} is locked to ${hex}.`);
+        break;
       }
-      state.settings.scanCount = entries.length;
-      state.openScanId = null;
-      closeDialog(sheet);
-      await pushSettings();
-      announce(`Removed ${entry.name}. ${entries.length} colours left.`);
+      case "edit-colour":
+        openColourSheet(entry);
+        break;
+      case "toggle-background":
+        pushHistory();
+        await setBackgroundEntry(
+          state.settings.palette.backgroundEntryId === entry.id ? null : entry.id
+        );
+        break;
+      case "toggle-enabled":
+        pushHistory();
+        entry.enabled = entry.enabled === false;
+        await pushSettings();
+        announce(`${entry.name} is ${entry.enabled ? "included" : "left out"}.`);
+        break;
+      case "remove": {
+        pushHistory();
+        const entries = state.settings.palette.entries;
+        entries.splice(entries.indexOf(entry), 1);
+        state.settings.palette.layerOrder =
+          state.settings.palette.layerOrder.filter((id) => id !== entry.id);
+        if (state.settings.palette.backgroundEntryId === entry.id) {
+          state.settings.palette.backgroundEntryId = null;
+        }
+        state.settings.scanCount = entries.length;
+        state.openScanId = null;
+        closeDialog(sheet);
+        await pushSettings();
+        announce(`Removed ${entry.name}. ${entries.length} colours left.`);
+        break;
+      }
     }
   });
 
@@ -1502,12 +2191,11 @@ function bindScanSheet() {
     const field = e.target.dataset.field;
     if (!entry || !field) return;
 
+    const before = snapshot();
+
     switch (field) {
       case "name":
         entry.name = e.target.value.trim() || entry.name;
-        break;
-      case "enabled":
-        entry.enabled = e.target.checked;
         break;
       case "role":
         entry.role = e.target.value;
@@ -1545,7 +2233,7 @@ function bindScanSheet() {
         } else {
           entry.traceProfile = {
             mode: "override",
-            values: structuredClone(state.settings.globalTraceProfile),
+            values: JSON.parse(JSON.stringify(state.settings.globalTraceProfile)),
           };
         }
         break;
@@ -1557,7 +2245,7 @@ function bindScanSheet() {
           ? state.traceProfiles.profiles[e.target.value]
           : state.settings.globalTraceProfile;
         entry.traceProfile.profileId = e.target.value || undefined;
-        entry.traceProfile.values = structuredClone(base);
+        entry.traceProfile.values = JSON.parse(JSON.stringify(base));
         break;
       }
       case "profileValue": {
@@ -1572,26 +2260,287 @@ function bindScanSheet() {
         return;
     }
 
+    pushHistory(before);
     await pushSettings();
   });
 }
 
 function reorderEntry(id, direction) {
   const entries = state.settings.palette.entries;
-  const order = state.settings.palette.layerOrder;
-
   const index = entries.findIndex((e) => e.id === id);
-  const swap = index + direction;
-  if (index < 0 || swap < 0 || swap >= entries.length) return;
-  [entries[index], entries[swap]] = [entries[swap], entries[index]];
+  moveEntryTo(id, index + direction);
+}
+
+/** Moves an entry to an absolute position, keeping layer order in step. */
+function moveEntryTo(id, position) {
+  const entries = state.settings.palette.entries;
+  const from = entries.findIndex((e) => e.id === id);
+  const to = Math.max(0, Math.min(entries.length - 1, position));
+  if (from < 0 || from === to) return false;
+
+  entries.splice(to, 0, entries.splice(from, 1)[0]);
 
   // Layer order is the list that actually drives stacking (§10.4); the visible
   // list is kept in step with it so a moved row stays where the user put it.
-  const orderIndex = order.indexOf(id);
-  const orderSwap = orderIndex + direction;
-  if (orderIndex >= 0 && orderSwap >= 0 && orderSwap < order.length) {
-    [order[orderIndex], order[orderSwap]] = [order[orderSwap], order[orderIndex]];
+  state.settings.palette.layerOrder = entries.map((entry) => entry.id);
+  return true;
+}
+
+// -------------------------------------------------------------------------
+// Typing a colour
+// -------------------------------------------------------------------------
+
+/** Opens the colour sheet, either to add a new colour or to change `entry`. */
+function openColourSheet(entry) {
+  state.colourSheet = { entryId: entry ? entry.id : null };
+
+  document.getElementById("sheet-colour-title").textContent =
+    entry ? `Change ${entry.name}` : "Add a colour";
+  document.getElementById("btn-colour-confirm").textContent = entry ? "Apply" : "Add";
+
+  const start = entry ? entryHex(entry) : "#3B7DD8";
+  document.getElementById("colour-input").value = start;
+  document.getElementById("colour-native").value = start.toLowerCase();
+  renderColourPreview();
+
+  openDialog(document.getElementById("sheet-colour"));
+  document.getElementById("colour-input").select();
+}
+
+function renderColourPreview() {
+  const text = document.getElementById("colour-input").value;
+  const parsed = parseColorInput(text);
+  const chip = document.getElementById("colour-preview-chip");
+  const hexLabel = document.getElementById("colour-preview-hex");
+  const note = document.getElementById("colour-preview-note");
+  const formats = document.getElementById("colour-formats");
+  const confirm = document.getElementById("btn-colour-confirm");
+
+  if (!parsed) {
+    chip.style.backgroundColor = "transparent";
+    hexLabel.textContent = "—";
+    note.textContent = text.trim() ? "Not a colour this understands." : "Type or paste a colour.";
+    note.classList.toggle("is-bad", !!text.trim());
+    formats.innerHTML = "";
+    confirm.disabled = true;
+    return;
   }
+
+  const hex = rgb01ToHex(parsed);
+  chip.style.backgroundColor = hex;
+  hexLabel.textContent = hex;
+  note.textContent = "";
+  note.classList.remove("is-bad");
+  confirm.disabled = false;
+  document.getElementById("colour-native").value = hex.toLowerCase();
+
+  formats.innerHTML = colorNotations(parsed).map((notation) => `
+    <button type="button" class="format-chip" data-notation="${escapeHtml(notation)}"
+            title="Use this notation">${escapeHtml(notation)}</button>
+  `).join("");
+}
+
+async function confirmColourSheet() {
+  const parsed = parseColorInput(document.getElementById("colour-input").value);
+  if (!parsed) return;
+
+  let hex = rgb01ToHex(parsed);
+  const snap = document.getElementById("colour-snap").checked;
+
+  if (snap && state.session && state.session.hasImage) {
+    try {
+      const nearest = await api("/api/nearest_source_color", { method: "POST", body: { hex } });
+      if (nearest.hex && nearest.hex !== hex) {
+        announce(`${hex} is not in the picture; using ${nearest.hex}, the closest colour that is.`);
+        hex = nearest.hex;
+      }
+    } catch {
+      // The typed colour stands; api() has already said why the lookup failed.
+    }
+  }
+
+  const target = state.colourSheet && state.colourSheet.entryId
+    ? findEntry(state.colourSheet.entryId)
+    : null;
+
+  closeDialog(document.getElementById("sheet-colour"));
+
+  if (target) {
+    pushHistory();
+    const { r, g, b } = hexToRgb01(hex);
+    pinEntryTo(target, hex, srgbToOklch(r, g, b).C);
+    await pushSettings();
+    announce(`${target.name} is now ${hex}.`);
+  } else {
+    await addPinnedColour(hex, { name: `Colour ${hex}`, announceAs: `Added ${hex}` });
+  }
+}
+
+function bindColourSheet() {
+  const sheet = document.getElementById("sheet-colour");
+  const input = document.getElementById("colour-input");
+
+  input.addEventListener("input", renderColourPreview);
+  document.getElementById("colour-native").addEventListener("input", (e) => {
+    input.value = e.target.value.toUpperCase();
+    renderColourPreview();
+  });
+
+  document.getElementById("colour-formats").addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-notation]");
+    if (!chip) return;
+    input.value = chip.dataset.notation;
+    renderColourPreview();
+    input.focus();
+  });
+
+  document.getElementById("form-colour").addEventListener("submit", (e) => {
+    e.preventDefault();
+    confirmColourSheet().catch((err) => showAlert(err.message));
+  });
+
+  sheet.addEventListener("close", () => { state.colourSheet = null; });
+}
+
+// -------------------------------------------------------------------------
+// Reordering by long press
+//
+// Holding a swatch lifts it out of the strip; dragging slides the others aside
+// to show where it will land. The press has to be long enough not to fire on a
+// scroll of the strip, and short enough not to feel stuck.
+// -------------------------------------------------------------------------
+
+const LIFT_DELAY_MS = 320;
+const LIFT_CANCEL_PX = 12;
+
+function bindSwatchReordering() {
+  const list = document.getElementById("swatch-list");
+  let press = null;
+  let drag = null;
+
+  const cancelPress = () => {
+    if (press) clearTimeout(press.timer);
+    press = null;
+  };
+
+  const beginDrag = () => {
+    if (!press) return;
+    const items = [...list.querySelectorAll('[data-draggable="true"]')];
+    const index = items.indexOf(press.swatch);
+    if (index < 0 || items.length < 2) return cancelPress();
+
+    const first = items[0].getBoundingClientRect();
+    const second = items[1].getBoundingClientRect();
+    const vertical = Math.abs(second.top - first.top) > Math.abs(second.left - first.left);
+    const stride = vertical ? second.top - first.top : second.left - first.left;
+
+    drag = { items, index, target: index, vertical, stride, swatch: press.swatch };
+    list.classList.add("is-reordering");
+    press.swatch.classList.add("is-lifted");
+    haptic(12);
+    announce(`Moving ${press.swatch.getAttribute("aria-label")}. Drag to reorder.`);
+  };
+
+  list.addEventListener("pointerdown", (e) => {
+    const swatch = e.target.closest('[data-draggable="true"]');
+    if (!swatch || e.button > 0) return;
+
+    press = { swatch, x: e.clientX, y: e.clientY, pointerId: e.pointerId, moved: false };
+    press.timer = setTimeout(beginDrag, LIFT_DELAY_MS);
+    swatch.setPointerCapture(e.pointerId);
+  });
+
+  // `touch-action` cannot be changed once a gesture has begun, so the only way
+  // to stop the strip scrolling out from under a lifted swatch is to refuse the
+  // touch itself. The hold is stationary, so nothing has started scrolling by
+  // the time this begins refusing.
+  list.addEventListener("touchmove", (e) => {
+    if (drag) e.preventDefault();
+  }, { passive: false });
+
+  list.addEventListener("pointermove", (e) => {
+    if (!press || e.pointerId !== press.pointerId) return;
+
+    const dx = e.clientX - press.x;
+    const dy = e.clientY - press.y;
+
+    if (!drag) {
+      // Movement before the hold completes is a scroll of the strip, not a
+      // drag of one swatch.
+      if (Math.hypot(dx, dy) > LIFT_CANCEL_PX) {
+        press.moved = true;
+        cancelPress();
+      }
+      return;
+    }
+
+    e.preventDefault();
+    const travel = drag.vertical ? dy : dx;
+    drag.swatch.style.transform = `translate(${drag.vertical ? 0 : dx}px, ${drag.vertical ? dy : 0}px) scale(1.06)`;
+
+    const wanted = Math.max(0, Math.min(
+      drag.items.length - 1,
+      drag.index + Math.round(travel / drag.stride)
+    ));
+    if (wanted === drag.target) return;
+
+    drag.target = wanted;
+    drag.items.forEach((item, index) => {
+      if (item === drag.swatch) return;
+      let shift = 0;
+      if (index > drag.index && index <= wanted) shift = -drag.stride;
+      if (index < drag.index && index >= wanted) shift = drag.stride;
+      item.style.transform = drag.vertical ? `translateY(${shift}px)` : `translateX(${shift}px)`;
+    });
+  });
+
+  for (const eventName of ["pointerup", "pointercancel"]) {
+    list.addEventListener(eventName, async (e) => {
+      if (!press || e.pointerId !== press.pointerId) return;
+
+      const wasDragging = drag;
+      const tapped = !drag && !press.moved && eventName === "pointerup";
+      const swatch = press.swatch;
+      cancelPress();
+
+      if (wasDragging) {
+        list.classList.remove("is-reordering");
+        for (const item of wasDragging.items) item.style.transform = "";
+        swatch.classList.remove("is-lifted");
+        drag = null;
+
+        if (wasDragging.target !== wasDragging.index) {
+          pushHistory();
+          moveEntryTo(swatch.dataset.entryId, wasDragging.target);
+          haptic(8);
+          await pushSettings();
+          announce(`Moved to layer ${wasDragging.target + 1}.`);
+        }
+        return;
+      }
+
+      if (tapped) openScanSheet(swatch.dataset.entryId);
+    });
+  }
+
+  // The same move, for anyone not holding a pointer (§29).
+  list.addEventListener("keydown", async (e) => {
+    const swatch = e.target.closest('[data-draggable="true"]');
+    if (!swatch || !e.altKey) return;
+
+    const direction = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+    if (!direction) return;
+
+    e.preventDefault();
+    pushHistory();
+    reorderEntry(swatch.dataset.entryId, direction);
+    await pushSettings();
+    announce(direction < 0 ? "Moved further back." : "Moved further forward.");
+  });
+
+  list.addEventListener("click", (e) => {
+    if (e.target.closest("#btn-add-swatch")) openColourSheet(null);
+  });
 }
 
 // -------------------------------------------------------------------------
@@ -1601,35 +2550,30 @@ function reorderEntry(id, direction) {
 function bindWorkspace() {
   bindStageGestures();
   bindScanSheet();
-
-  document.getElementById("swatch-list").addEventListener("click", (e) => {
-    const button = e.target.closest("[data-open-scan]");
-    if (button) openScanSheet(button.dataset.openScan);
-  });
-
-  // Drag to reorder is a pointer-only convenience; Move back / Move forward in
-  // each colour's sheet is the mechanism that works everywhere (§9.2).
-  bindSwatchDragging();
+  bindColourSheet();
+  bindSwatchReordering();
 
   document.getElementById("btn-pick").addEventListener("click", () => setPicking(!state.picking));
   document.getElementById("btn-stop-picking").addEventListener("click", () => setPicking(false));
+  document.getElementById("btn-add-colour").addEventListener("click", () => openColourSheet(null));
 
-  for (const input of document.querySelectorAll('input[name="sample-mode"]')) {
-    input.addEventListener("change", (e) => {
-      if (!e.target.checked) return;
-      state.sampleMode = e.target.value;
-      if (state.target) drawLoupe();
-    });
-  }
+  document.querySelector(".pickbar .segmented").addEventListener("click", (e) => {
+    const button = e.target.closest("[data-sample]");
+    if (!button) return;
+    state.sampleMode = button.dataset.sample;
+    for (const other of document.querySelectorAll("[data-sample]")) {
+      other.setAttribute("aria-checked", String(other === button));
+    }
+    if (state.target) drawLoupe();
+  });
 
-  for (const input of document.querySelectorAll('input[name="preview-mode"]')) {
-    input.addEventListener("change", (e) => {
-      if (!e.target.checked) return;
-      state.previewMode = e.target.value;
-      renderModeCaption();
-      renderCanvas();
-    });
-  }
+  document.querySelector(".stage-modes").addEventListener("click", (e) => {
+    const button = e.target.closest("[data-mode]");
+    if (!button) return;
+    state.previewMode = button.dataset.mode;
+    renderModeCaption();
+    renderCanvas();
+  });
 
   document.getElementById("btn-zoom-in").addEventListener("click", () => zoomBy(1.25));
   document.getElementById("btn-zoom-out").addEventListener("click", () => zoomBy(0.8));
@@ -1649,48 +2593,74 @@ function bindWorkspace() {
     setScanCount(state.settings.scanCount - 1);
   });
 
+  document.getElementById("btn-auto-backdrop").addEventListener("click", toggleAutoBackdrop);
+  document.getElementById("btn-tune").addEventListener("click", () => {
+    openDialog(document.getElementById("sheet-setup"));
+  });
+  document.getElementById("btn-warnings").addEventListener("click", () => {
+    openDialog(document.getElementById("sheet-warnings"));
+  });
+
+  document.getElementById("btn-undo").addEventListener("click", () => {
+    stepHistory(state.history.past, state.history.future);
+  });
+  document.getElementById("btn-redo").addEventListener("click", () => {
+    stepHistory(state.history.future, state.history.past);
+  });
+
   document.getElementById("destination-list").addEventListener("click", async (e) => {
     const button = e.target.closest("[data-destination]");
     if (!button) return;
-    const data = await api("/api/apply_destination", {
-      method: "POST",
-      body: { destinationId: button.dataset.destination },
-    });
-    applyServerResponse(data);
+    pushHistory();
+    tracing.begin();
+    try {
+      const data = await api("/api/apply_destination", {
+        method: "POST",
+        body: { destinationId: button.dataset.destination },
+      });
+      applyServerResponse(data);
+    } finally {
+      tracing.end();
+    }
     announce(`Set up for ${DESTINATIONS[button.dataset.destination].title.toLowerCase()}.`);
   });
 
   document.getElementById("select-backend").addEventListener("change", async (e) => {
+    pushHistory();
     state.settings.backend.preferredBackendId = e.target.value;
     await pushSettings();
     announce("Tracing engine changed.");
   });
 
-  document.getElementById("select-background-entry").addEventListener("change", async (e) => {
+  document.getElementById("select-background-entry").addEventListener("change", (e) => {
+    pushHistory();
     setBackgroundEntry(e.target.value || null);
-    await pushSettings();
-    announce(e.target.value ? "Backdrop colour set." : "No backdrop colour.");
   });
 
-  for (const input of document.querySelectorAll('input[name="bg-matching"]')) {
-    input.addEventListener("change", async (e) => {
-      if (!e.target.checked) return;
-      state.settings.palette.backgroundMatching = e.target.value;
-      await pushSettings();
-    });
-  }
-
-  for (const input of document.querySelectorAll('input[name="bg-output"]')) {
-    input.addEventListener("change", async (e) => {
-      if (!e.target.checked) return;
-      state.settings.output.backgroundOutput = e.target.value;
-      await pushSettings();
-    });
+  for (const [name, apply] of [
+    ["bg-matching", (value) => { state.settings.palette.backgroundMatching = value; }],
+    ["bg-output", (value) => { state.settings.output.backgroundOutput = value; }],
+    ["bg-foreground", (value) => { state.settings.palette.backgroundForegroundPolicy = value; }],
+  ]) {
+    for (const input of document.querySelectorAll(`input[name="${name}"]`)) {
+      input.addEventListener("change", async (e) => {
+        if (!e.target.checked) return;
+        pushHistory();
+        apply(e.target.value);
+        await pushSettings();
+      });
+    }
   }
 
   document.getElementById("btn-reset-destination").addEventListener("click", async () => {
-    const data = await api("/api/reset_destination_defaults", { method: "POST" });
-    applyServerResponse(data);
+    pushHistory();
+    tracing.begin();
+    try {
+      const data = await api("/api/reset_destination_defaults", { method: "POST" });
+      applyServerResponse(data);
+    } finally {
+      tracing.end();
+    }
     announce("Technical settings reset. Your colours were kept.");
   });
 
@@ -1703,24 +2673,44 @@ function bindWorkspace() {
     setView("start");
   });
 
-  for (const id of ["btn-commit", "btn-commit-bottom"]) {
-    document.getElementById(id).addEventListener("click", commit);
+  document.getElementById("btn-commit").addEventListener("click", commit);
+  document.getElementById("btn-cancel").addEventListener("click", cancel);
+
+  document.addEventListener("keydown", onGlobalKeyDown);
+}
+
+function onGlobalKeyDown(e) {
+  if (document.body.dataset.view !== "workspace") return;
+
+  const target = e.target instanceof Element ? e.target : null;
+  const typing = target && target.matches("input, textarea, select");
+
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (e.shiftKey) stepHistory(state.history.future, state.history.past);
+    else stepHistory(state.history.past, state.history.future);
+    return;
   }
-  for (const id of ["btn-cancel", "btn-cancel-bottom"]) {
-    document.getElementById(id).addEventListener("click", cancel);
-  }
+
+  // A single letter is a shortcut only where it cannot also be typing.
+  if (typing || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (document.querySelector("dialog[open]")) return;
+
+  if (e.key === "i" || e.key === "p") { e.preventDefault(); setPicking(!state.picking); }
+  if (e.key === "Escape" && state.picking) { e.preventDefault(); setPicking(false); }
 }
 
 function setScanCount(value) {
   const next = Math.max(1, Math.min(64, value || 1));
   if (next === state.settings.scanCount) return;
+  pushHistory();
   state.settings.scanCount = next;
   pushSettings().then(() => {
     announce(`Now tracing ${next} ${next === 1 ? "colour" : "colours"}.`);
   });
 }
 
-function setBackgroundEntry(entryId) {
+async function setBackgroundEntry(entryId) {
   for (const entry of state.settings.palette.entries) {
     if (entry.id === entryId) {
       entry.role = "background";
@@ -1729,38 +2719,44 @@ function setBackgroundEntry(entryId) {
     }
   }
   state.settings.palette.backgroundEntryId = entryId || null;
+
+  // A backdrop is what everything else is in front of. Left where it was in
+  // the stack it would paint over the picture, which is not what anyone means
+  // by the word — so choosing one sends it to the back.
+  if (entryId) moveEntryTo(entryId, 0);
+
+  await pushSettings();
+  const entry = entryId && findEntry(entryId);
+  announce(entry ? `${entry.name} is now the backdrop, behind everything else.` : "No backdrop colour.");
 }
 
-function bindSwatchDragging() {
-  const list = document.getElementById("swatch-list");
-  let dragId = null;
+/**
+ * One tap to a backdrop.
+ *
+ * Whatever runs around the edge of a picture is almost always its backdrop, so
+ * the scan owning the most of the frame is the candidate, and `edge_connected`
+ * matching comes with it — that is the setting that stops an enclosed patch of
+ * the same colour from being swallowed.
+ */
+async function toggleAutoBackdrop() {
+  if (state.settings.palette.backgroundEntryId) {
+    pushHistory();
+    await setBackgroundEntry(null);
+    return;
+  }
 
-  list.addEventListener("dragstart", (e) => {
-    const row = e.target.closest("[data-entry-id]");
-    if (!row) return;
-    dragId = row.dataset.entryId;
-    e.dataTransfer.effectAllowed = "move";
-  });
+  const candidates = state.scanResults
+    .filter((scan) => !scan.derived && findEntry(scan.entryId))
+    .sort((a, b) => (b.borderSharePercent || 0) - (a.borderSharePercent || 0));
 
-  list.addEventListener("dragover", (e) => {
-    if (e.target.closest("[data-entry-id]")) e.preventDefault();
-  });
+  if (!candidates.length || (candidates[0].borderSharePercent || 0) < 25) {
+    showAlert("No colour owns enough of the edge to be an obvious backdrop. Choose one under Setup.");
+    return;
+  }
 
-  list.addEventListener("drop", async (e) => {
-    const row = e.target.closest("[data-entry-id]");
-    if (!row || !dragId || row.dataset.entryId === dragId) return;
-    e.preventDefault();
-
-    const entries = state.settings.palette.entries;
-    const from = entries.findIndex((entry) => entry.id === dragId);
-    const to = entries.findIndex((entry) => entry.id === row.dataset.entryId);
-    const step = from < to ? 1 : -1;
-    for (let i = from; i !== to; i += step) reorderEntry(dragId, step);
-
-    dragId = null;
-    await pushSettings();
-    announce("Order changed.");
-  });
+  pushHistory();
+  state.settings.palette.backgroundMatching = "edge_connected";
+  await setBackgroundEntry(candidates[0].entryId);
 }
 
 // -------------------------------------------------------------------------
@@ -1893,8 +2889,14 @@ function bindDialogs() {
     const presetUuid = button.dataset.presetId;
 
     if (button.dataset.presetAction === "apply") {
-      const data = await api("/api/user_presets/apply", { method: "POST", body: { presetUuid } });
-      applyServerResponse(data);
+      pushHistory();
+      tracing.begin();
+      try {
+        const data = await api("/api/user_presets/apply", { method: "POST", body: { presetUuid } });
+        applyServerResponse(data);
+      } finally {
+        tracing.end();
+      }
       closeDialog(document.getElementById("dialog-load-preset"));
       announce("Saved settings applied.");
     } else {
@@ -1916,9 +2918,13 @@ async function resolveSourceChange(action) {
     return;
   }
 
-  const data = await api("/api/resolve_source_change", { method: "POST", body: { action } });
-  applyServerResponse(data);
-  document.getElementById("source-changed-badge").hidden = true;
+  tracing.begin();
+  try {
+    const data = await api("/api/resolve_source_change", { method: "POST", body: { action } });
+    applyServerResponse(data);
+  } finally {
+    tracing.end();
+  }
   closeDialog(dialog);
   announce("Sorted out.");
 }

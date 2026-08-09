@@ -5,11 +5,13 @@ REST API handlers for Palette Trace local web interface.
 import io
 import base64
 import uuid
+from urllib.parse import unquote
 
 import numpy as np
 from PIL import Image
 
-from palette_trace.color.conversion import srgb_to_hex
+from palette_trace.color.conversion import hex_to_srgb, srgb_to_hex, srgb_to_oklab
+from palette_trace.color.histogram import unique_source_colors
 from palette_trace.errors import PaletteTraceError
 from palette_trace.pipeline.controller import PipelineController
 from palette_trace.presets.destination import (
@@ -26,7 +28,12 @@ from palette_trace.presets.user_presets import (
     save_user_preset,
 )
 from palette_trace.server.session import ORIGIN_UPLOAD
-from palette_trace.server.uploads import decode_upload, display_name
+from palette_trace.server.uploads import (
+    MAX_WORKING_PIXELS,
+    decode_bytes,
+    decode_upload,
+    display_name,
+)
 from palette_trace.settings import (
     compute_settings_hash,
     record_generation_provenance,
@@ -46,14 +53,33 @@ SAMPLE_DOMINANT_15X15 = "15x15_dominant"
 SAMPLE_MODES = (SAMPLE_EXACT, SAMPLE_MEDIAN_5X5, SAMPLE_DOMINANT_15X15)
 
 
+def _representative_pixel(window: np.ndarray) -> tuple[float, float, float]:
+    """
+    The pixel of `window` closest to its per-channel median.
+
+    The median itself is computed channel by channel, so on an even-sized run —
+    or on any window where the three channels disagree about which pixel sits in
+    the middle — it is a value no pixel in the window actually has. Returning the
+    nearest real pixel instead keeps the median's resistance to outliers while
+    guaranteeing the answer is a colour the picture contains (§34.5).
+    """
+    median = np.median(window, axis=0)
+    distances = ((window - median) ** 2).sum(axis=1)
+    # `argmin` takes the first minimum, and the window is scanned in raster
+    # order, so the same window always answers with the same pixel (§34.30).
+    pixel = window[int(np.argmin(distances))]
+    return float(pixel[0]), float(pixel[1]), float(pixel[2])
+
+
 def sample_source_color(srgb, x: int, y: int, mode: str) -> tuple[float, float, float]:
     """
     Samples one colour from the decoded source at (x, y).
 
-    §9.3 forbids an arithmetic mean: averaging across an edge invents a colour
-    that appears nowhere in the image, which is exactly the colour a user
-    aiming at an edge does not want. The median returns a real neighbourhood
-    colour, and the dominant mode returns the most common one.
+    Every mode returns a colour that is literally present in the picture. §9.3
+    forbids an arithmetic mean because averaging across an edge invents a colour
+    that appears nowhere — but a per-channel median can invent one too, so the
+    neighbourhood modes report the real pixel nearest to that median rather than
+    the median itself.
     """
     height, width = srgb.shape[:2]
 
@@ -68,17 +94,80 @@ def sample_source_color(srgb, x: int, y: int, mode: str) -> tuple[float, float, 
     ].reshape(-1, 3)
 
     if mode == SAMPLE_MEDIAN_5X5:
-        return tuple(float(np.median(window[:, channel])) for channel in range(3))
+        return _representative_pixel(window)
 
     # Dominant: bucket the window at 5 bits per channel, take the most
-    # populated bucket, and return the median *within* it. Reporting the
-    # bucket centre instead would return a colour the image does not contain.
+    # populated bucket, and report a real pixel from within it. The bucket
+    # centre would be a colour the image does not contain.
     buckets = (window * 31.0).round().astype(np.int32)
     keys = buckets[:, 0] * 1024 + buckets[:, 1] * 32 + buckets[:, 2]
     unique, counts = np.unique(keys, return_counts=True)
     # np.unique sorts, so ties resolve to the lowest key — deterministic.
     dominant = window[keys == unique[int(np.argmax(counts))]]
-    return tuple(float(np.median(dominant[:, channel])) for channel in range(3))
+    return _representative_pixel(dominant)
+
+
+def nearest_source_color(srgb, r: float, g: float, b: float) -> tuple[float, float, float]:
+    """
+    The colour in the picture perceptually closest to the one asked for.
+
+    Backs the "snap to the picture" option on typed-in colours: a value copied
+    out of a brand guide is rarely a value the scan actually contains, and a
+    palette entry anchored to a colour that is not there claims nothing.
+    """
+    target = np.asarray(srgb_to_oklab(r, g, b), dtype=np.float64)
+    rgb255, _, oklab = unique_source_colors(srgb, np.ones(srgb.shape[:2], dtype=bool))
+    if rgb255.shape[0] == 0:
+        return r, g, b
+
+    closest = int(np.argmin(((oklab - target) ** 2).sum(axis=1)))
+    red, green, blue = rgb255[closest]
+    return red / 255.0, green / 255.0, blue / 255.0
+
+
+def _header(headers: dict, name: str) -> str:
+    """Case-insensitive header lookup; `http.server` preserves the sent casing."""
+    lowered = name.lower()
+    for key, value in headers.items():
+        if key.lower() == lowered:
+            return value
+    return ""
+
+
+def _header_file_name(headers: dict) -> str:
+    """
+    The uploaded file's name, sent percent-encoded so it survives a header.
+
+    Header values are Latin-1 by the letter of HTTP, and a filename is whatever
+    the user's filesystem allows, so the browser encodes it on the way out.
+    """
+    raw = _header(headers, "X-File-Name")
+    try:
+        return unquote(raw)
+    except (UnicodeDecodeError, ValueError):
+        return ""
+
+
+def _flag(body: dict, headers: dict, key: str, header_name: str) -> bool:
+    """A boolean sent either in a JSON body or, for a raw upload, as a header."""
+    if key in body:
+        return bool(body[key])
+    return _header(headers, header_name).strip().lower() in ("1", "true", "yes")
+
+
+def _client_bitmap_size(body: dict, headers: dict) -> tuple[int, int] | None:
+    """The size of the bitmap the client already holds, when it reported one."""
+    reported = body.get("clientBitmap")
+    if isinstance(reported, dict):
+        values = (reported.get("width"), reported.get("height"))
+    else:
+        values = (_header(headers, "X-Client-Width"), _header(headers, "X-Client-Height"))
+
+    try:
+        width, height = int(values[0]), int(values[1])
+    except (TypeError, ValueError):
+        return None
+    return (width, height) if width > 0 and height > 0 else None
 
 
 def _run_pipeline(session) -> dict:
@@ -133,6 +222,11 @@ def _session_state(session) -> dict:
         "resizeNotice": session.resize_notice,
         # §27: the interface must offer recovery choices when true.
         "sourceChanged": bool(getattr(session, "source_changed", False)),
+        # The pixel budget the server will resize an upload down to. Told to the
+        # client so it can do that scaling itself before sending: the same
+        # bitmap arrives, but a phone photograph stops spending seconds being
+        # encoded, transferred and decoded at a size nothing will ever use.
+        "maxWorkingPixels": MAX_WORKING_PIXELS,
     }
 
 
@@ -180,6 +274,7 @@ def _build_result_svg(session) -> str:
 #: instead of being folded into each handler.
 _REQUIRES_IMAGE = frozenset({
     "/api/sample_color",
+    "/api/nearest_source_color",
     "/api/update_settings",
     "/api/preview_source",
     "/api/apply_destination",
@@ -215,12 +310,19 @@ def handle_api_request(session, path: str, method: str, body: dict, headers: dic
             return (400, {"error": "This host supplies its own image and cannot load another."})
 
         try:
-            source, resize_notice = decode_upload(body.get("dataUri", ""))
+            if body.get("rawBody") is not None:
+                source, resize_notice = decode_bytes(
+                    body["rawBody"], body.get("contentType", "")
+                )
+                file_name = _header_file_name(headers)
+            else:
+                source, resize_notice = decode_upload(body.get("dataUri", ""))
+                file_name = body.get("fileName", "")
         except PaletteTraceError as exc:
             return (400, {"error": str(exc)})
 
         session.image_source = source
-        session.image_name = display_name(body.get("fileName", ""))
+        session.image_name = display_name(file_name)
         session.origin = ORIGIN_UPLOAD
         session.output_path = None
         session.resize_notice = resize_notice
@@ -241,10 +343,37 @@ def handle_api_request(session, path: str, method: str, body: dict, headers: dic
             "mimeType": source.mime_type,
         })
 
-        response = _settings_response(session)
+        # The trace is the slow half of loading a picture. A client that intends
+        # to show the bitmap first and ask for colours second says so, and gets
+        # the decode on its own — the interface stops being blank a lot sooner.
+        if _flag(body, headers, "deferTrace", "X-Defer-Trace"):
+            response = {"status": "success"}
+        else:
+            response = _settings_response(session)
         response.update(_session_state(session))
-        response["dataUri"] = _source_preview_data_uri(session)
+
+        # Re-encoding the source to base64 PNG costs seconds on a phone
+        # photograph, and the browser that just chose the file already has the
+        # pixels. It is only sent when the decode changed the picture's size —
+        # an EXIF rotation, or a resize down to the working budget — because
+        # that is when the client's copy is no longer what is being traced.
+        client_size = _client_bitmap_size(body, headers)
+        if client_size == (source.intrinsic_width, source.intrinsic_height):
+            response["usesClientBitmap"] = True
+        else:
+            response["dataUri"] = _source_preview_data_uri(session)
         return (200, response)
+
+    elif path == "/api/nearest_source_color" and method == "POST":
+        try:
+            red, green, blue = hex_to_srgb(str(body.get("hex", "")))
+        except ValueError:
+            return (400, {"error": "That is not a colour this can look up."})
+
+        red, green, blue = nearest_source_color(session.image_source.srgb, red, green, blue)
+        return (200, {
+            "hex": srgb_to_hex(red, green, blue), "r": red, "g": green, "b": blue,
+        })
 
     elif path == "/api/export" and method == "POST":
         # Deliberately does not end the session: a download is a checkpoint,

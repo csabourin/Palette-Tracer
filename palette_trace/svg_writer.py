@@ -86,12 +86,16 @@ def build_svg_document(
         if scan.get("isBackground"):
             group_attrs.append(_attr("pt:background", "true"))
 
+        # Every subpath of a scan goes into one `<path>`. A fill rule decides
+        # what is inside a shape by counting the subpaths a ray crosses, so
+        # subpaths split across separate elements cannot subtract from each
+        # other: a hole emitted as its own element is not a hole, it is a
+        # second copy of the shape filled solid over the gap it should leave.
         lines.append("    <g " + " ".join(group_attrs) + ">")
-        for path_data in path_datas:
-            style = f"fill:{hex_color};fill-rule:{fill_rule};stroke:none"
-            lines.append(
-                f"      <path {_attr('d', path_data)} {_attr('style', style)}/>"
-            )
+        style = f"fill:{hex_color};fill-rule:{fill_rule};stroke:none"
+        lines.append(
+            f"      <path {_attr('d', ' '.join(path_datas))} {_attr('style', style)}/>"
+        )
         lines.append("    </g>")
 
     lines.append("  </g>")

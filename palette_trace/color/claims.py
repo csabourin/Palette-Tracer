@@ -61,6 +61,68 @@ class PinnedClaimEvaluator:
             self.light_tol = light_cfg.get("tolerance", 0.06)
             self.light_weight = light_cfg.get("weight", 1.0)
 
+    def evaluate_array(
+        self,
+        L: np.ndarray,
+        C: np.ndarray,
+        h: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Whole-image form of :meth:`evaluate_pixel`.
+
+        Returns (eligible, score) arrays shaped like `L`. Ineligible pixels
+        carry a score of `inf`, so a caller can take a running minimum without
+        having to mask first. The arithmetic is identical to the scalar path —
+        the scalar path is what the unit tests pin, and this is what actually
+        runs on an image, so the two must not be allowed to drift.
+        """
+        shape = L.shape
+        if self.mode != "reserve_within_reach":
+            return (np.zeros(shape, dtype=bool), np.full(shape, np.inf))
+
+        eligible = np.ones(shape, dtype=bool)
+        weighted_sq_sum = np.zeros(shape, dtype=np.float64)
+        weights_sum = np.zeros(shape, dtype=np.float64)
+
+        if self.light_enabled:
+            d_L = np.abs(L - self.anchor_L)
+            tol_L = max(1e-6, self.light_tol)
+            eligible &= d_L <= tol_L
+            weighted_sq_sum += self.light_weight * (d_L / tol_L) ** 2
+            weights_sum += self.light_weight
+
+        if self.chroma_enabled:
+            d_C = np.abs(C - self.anchor_C)
+            tol_C = max(1e-6, self.chroma_tol)
+            eligible &= d_C <= tol_C
+            weighted_sq_sum += self.chroma_weight * (d_C / tol_C) ** 2
+            weights_sum += self.chroma_weight
+
+        if self.hue_enabled:
+            # Hue confidence fades out as a pixel approaches neutral (§13.4), so
+            # the weight — and therefore whether hue is consulted at all — is a
+            # per-pixel quantity rather than a per-entry one.
+            confidence = np.clip(C / 0.05, 0.0, 1.0)
+            confidence = np.where(C <= 0.0, 0.0, confidence)
+            effective = self.hue_weight * confidence
+            consulted = effective > 1e-4
+
+            difference = np.abs(h - self.anchor_h) % 360.0
+            d_h = np.minimum(difference, 360.0 - difference)
+            tol_h = max(1e-6, self.hue_tol)
+
+            eligible &= ~consulted | (d_h <= tol_h)
+            contribution = effective * (d_h / tol_h) ** 2
+            weighted_sq_sum += np.where(consulted, contribution, 0.0)
+            weights_sum += np.where(consulted, effective, 0.0)
+
+        score = np.where(
+            weights_sum <= 1e-6,
+            0.0,
+            weighted_sq_sum / np.where(weights_sum <= 1e-6, 1.0, weights_sum),
+        )
+        return (eligible, np.where(eligible, score, np.inf))
+
     def evaluate_pixel(self, L: float, C: float, h: float) -> tuple[bool, float]:
         """
         Returns (is_eligible, normalized_score).
@@ -111,6 +173,64 @@ class PinnedClaimEvaluator:
         return (True, score)
 
 
+#: Two scores this close are the same score, and the tie goes to the entry that
+#: comes first in the palette (§14.3).
+CLAIM_EPSILON = 1e-6
+
+
+def resolve_claim_indices(
+    oklch_image: np.ndarray,
+    pinned_entries: list[dict],
+) -> tuple[np.ndarray, dict[str, float]]:
+    """
+    Classifies image pixels into pinned entry *positions*.
+
+    Returns an int32 array holding the index into `pinned_entries` that won each
+    pixel, or -1 where nothing claimed it, plus the per-entry claim percentages.
+
+    This is the form the pipeline wants: an index array is one contiguous
+    allocation, where the array of id strings that :func:`resolve_claimed_pixels`
+    returns is one Python object per pixel.
+    """
+    height, width, _ = oklch_image.shape
+    total_pixels = float(height * width) or 1.0
+
+    winners = np.full((height, width), -1, dtype=np.int32)
+    if not pinned_entries:
+        return winners, {}
+
+    evaluators = [
+        PinnedClaimEvaluator(entry, idx)
+        for idx, entry in enumerate(pinned_entries)
+    ]
+
+    L_arr = oklch_image[:, :, 0]
+    C_arr = oklch_image[:, :, 1]
+    h_arr = oklch_image[:, :, 2]
+
+    best_score = np.full((height, width), np.inf)
+
+    # Sequential, in palette order, exactly as the per-pixel version was: an
+    # entry only displaces the incumbent by beating it outright, so a tie always
+    # resolves to whichever entry was reached first.
+    for index, evaluator in enumerate(evaluators):
+        eligible, score = evaluator.evaluate_array(L_arr, C_arr, h_arr)
+        better = eligible & (score < best_score - CLAIM_EPSILON)
+        if not np.any(better):
+            continue
+        winners[better] = index
+        best_score[better] = score[better]
+
+    counts = np.bincount(
+        winners.ravel() + 1, minlength=len(evaluators) + 1
+    )[1:]
+    stats = {
+        entry["id"]: float(counts[index]) / total_pixels * 100.0
+        for index, entry in enumerate(pinned_entries)
+    }
+    return winners, stats
+
+
 def resolve_claimed_pixels(
     oklch_image: np.ndarray,
     pinned_entries: list[dict],
@@ -121,58 +241,12 @@ def resolve_claimed_pixels(
       claims_map: string array (or index array) of claimed palette entry IDs or None.
       stats: dict mapping entry_id -> percentage of image claimed.
     """
-    height, width, _ = oklch_image.shape
-    total_pixels = height * width
+    winners, stats = resolve_claim_indices(oklch_image, pinned_entries)
 
-    evaluators = [
-        PinnedClaimEvaluator(entry, idx)
-        for idx, entry in enumerate(pinned_entries)
-    ]
+    claims = np.full(winners.shape, None, dtype=object)
+    for index, entry in enumerate(pinned_entries):
+        claims[winners == index] = entry["id"]
 
-    claims = np.full((height, width), None, dtype=object)
-    claim_counts = {e["id"]: 0 for e in pinned_entries}
-
-    if not evaluators:
-        return claims, {e["id"]: 0.0 for e in pinned_entries}
-
-    L_arr = oklch_image[:, :, 0]
-    C_arr = oklch_image[:, :, 1]
-    h_arr = oklch_image[:, :, 2]
-
-    EPSILON = 1e-6
-
-    for y in range(height):
-        for x in range(width):
-            L, C, h = L_arr[y, x], C_arr[y, x], h_arr[y, x]
-
-            best_eval = None
-            best_score = float("inf")
-
-            for ev in evaluators:
-                eligible, score = ev.evaluate_pixel(L, C, h)
-                if not eligible:
-                    continue
-
-                if score < best_score - EPSILON:
-                    best_score = score
-                    best_eval = ev
-                elif abs(score - best_score) <= EPSILON:
-                    # Tie breakers: explicit claim priority -> UUID lexical order
-                    if best_eval is None:
-                        best_eval = ev
-                        best_score = score
-                    elif ev.priority_index < best_eval.priority_index:
-                        best_eval = ev
-                    elif ev.priority_index == best_eval.priority_index:
-                        if ev.id < best_eval.id:
-                            best_eval = ev
-
-            if best_eval is not None:
-                claims[y, x] = best_eval.id
-                claim_counts[best_eval.id] += 1
-
-    stats = {
-        eid: (count / float(total_pixels)) * 100.0
-        for eid, count in claim_counts.items()
-    }
+    if not pinned_entries:
+        return claims, {}
     return claims, stats
