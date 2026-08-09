@@ -57,7 +57,11 @@ def parse_data_uri(data_uri: str) -> tuple[str, bytes]:
     an accepted image type, or whose payload exceeds `MAX_UPLOAD_BYTES`.
     """
     if not isinstance(data_uri, str) or not data_uri.startswith("data:"):
-        raise ImageSourceError("The uploaded image was not sent as a data URI.")
+        raise ImageSourceError(
+            "No picture arrived with that request. If this keeps happening, "
+            "reload the page — the interface and the server it is talking to "
+            "may be from different versions."
+        )
 
     header, separator, payload = data_uri.partition(",")
     if not separator:
@@ -101,6 +105,33 @@ def decode_upload(data_uri: str) -> tuple[DecodedImageSource, str | None]:
     return decode_bytes(raw, mime_type)
 
 
+#: Leading bytes that identify a format, for when the declared type is missing
+#: or wrong. A `Content-Type` survives a browser, an XHR and a socket, but not
+#: reliably a reverse proxy — and the bytes themselves always say what they are.
+_MAGIC_NUMBERS = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"BM", "image/bmp"),
+    (b"II*\x00", "image/tiff"),
+    (b"MM\x00*", "image/tiff"),
+    (b"P6", "image/x-portable-pixmap"),
+    (b"P5", "image/x-portable-graymap"),
+)
+
+
+def sniff_image_type(raw: bytes) -> str | None:
+    """The format `raw` actually is, by its leading bytes, or None."""
+    for signature, mime_type in _MAGIC_NUMBERS:
+        if raw.startswith(signature):
+            return mime_type
+    # WebP is a RIFF container; the format only appears at byte 8.
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def decode_bytes(raw: bytes, mime_type: str) -> tuple[DecodedImageSource, str | None]:
     """
     Decodes a browser-supplied bitmap sent as raw bytes.
@@ -109,11 +140,18 @@ def decode_bytes(raw: bytes, mime_type: str) -> tuple[DecodedImageSource, str | 
     on both ends, which on a phone photograph is most of the wait before the
     picture appears. Posting the file's own bytes skips all of it; this is the
     same decode, without the envelope.
+
+    The declared type is a hint, not the answer: what the bytes begin with wins
+    whenever the two disagree, so an upload still loads when a proxy has
+    rewritten the header or a picker gave the file no type at all.
     """
-    mime_type = (mime_type or "").split(";")[0].strip().lower()
+    declared = (mime_type or "").split(";")[0].strip().lower()
+    sniffed = sniff_image_type(raw)
+
+    mime_type = sniffed or declared
     if mime_type not in ACCEPTED_MIME_TYPES:
         raise ImageSourceError(
-            f"{mime_type or 'That file type'} is not an image format Palette Trace can trace."
+            f"{declared or 'That file'} is not an image format Palette Trace can trace."
         )
 
     if len(raw) > MAX_UPLOAD_BYTES:
