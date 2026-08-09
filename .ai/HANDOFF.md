@@ -62,6 +62,43 @@ Known interaction, not a defect: Undo lives in the header, so undoing a removal
 means closing the sheet first. That is what a modal `<dialog>` is for, and it is
 true of every other sheet in this interface.
 
+### The Replit failures were in `.replit`, not in the code
+
+Two failures were reported from Replit — an unexplained message when adding a
+colour, and a 404 from the main button — on the build at `94e3614`, before the
+palette sheet existed.
+
+The flow Replit actually serves was then driven end to end in Chromium: launch
+with **no image**, load a bitmap in the browser, pick a colour, change one by
+typing, press the blue button. Against the current tree *and* against `94e3614`,
+every `/api/*` call returned 200 and the SVG downloaded. The code was not at
+fault, so `.replit` was:
+
+* it declared **two ports** — `[env] PORT = "8080"` mapped to external 80, and a
+  workflow forcing `PORT=8000` mapped to external 8000 — so the address the
+  webview opens by default and the port actually bound were not the same. What
+  answers at an address where nothing is listening is Replit's proxy, and its
+  404 is indistinguishable, from inside the page, from ours;
+* the workflow ran `.pythonlibs/bin/python3 -m palette_trace.standalone`
+  **directly**, skipping the `pip install -e .` in `scripts/replit_run.sh`. No
+  numpy, no pillow, no scipy, no potracer — and possibly no such interpreter;
+* the two entry points did different things: the script traced the bundled
+  sample into `/tmp`, the workflow started with no image.
+
+Now: one port (`8000 → 80`), one entry point (`scripts/replit_run.sh`, which
+installs first), and the script starts **without an image** so the user brings
+their own picture, which is the only thing that makes sense on a hosted webview.
+
+`web/app.js::api()` also learned to tell "this failed" from "something else
+answered": a reply that will not parse as JSON did not come from this server,
+and now says so instead of blaming Palette Trace. Verified by serving `web/`
+from `python -m http.server`, which 404s every API path — the old build said
+"Something went wrong (404)", which is exactly the unexplained 404 that was
+reported.
+
+**Unverified, and only you can:** none of this is proof until Run is pressed
+inside an actual Replit container.
+
 ## What changed in the previous session (2026-08-08)
 
 ### The interface was rewritten

@@ -426,18 +426,46 @@ function colorNotations(rgb) {
 // API client
 // -------------------------------------------------------------------------
 
+/**
+ * Every API call, and the one place that can tell "this failed" apart from
+ * "something else answered".
+ *
+ * This server replies in JSON to every path under /api/, success or failure.
+ * So a reply that is not JSON did not come from it: a proxy in front, a port
+ * where nothing is listening, an address that reaches something else entirely.
+ * Reporting that as "something went wrong" blames this application for a
+ * problem that is not in it, and leaves the one useful fact — that the answer
+ * came from somewhere else — unsaid.
+ */
 async function api(path, { method = "GET", body, quiet = false } = {}) {
   const res = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  let data;
+
+  let raw = "";
   try {
-    data = await res.json();
+    raw = await res.text();
   } catch {
-    data = {};
+    /* a body that cannot be read is handled as an unparseable one */
   }
+
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = null;   // not JSON, therefore not this server
+  }
+
+  if (data === null) {
+    const message = `${path} was answered by something other than Palette Trace `
+      + `(HTTP ${res.status}). Check the address you opened, and anything sitting `
+      + `in front of the server.`;
+    if (!quiet) showAlert(message);
+    throw new Error(message);
+  }
+
   if (!res.ok) {
     const message = data.error || `Something went wrong (${res.status}).`;
     if (!quiet) showAlert(message);
@@ -508,13 +536,13 @@ function uploadImage(blob, { fileName, width, height, deferTrace }, onProgress) 
       if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
     });
     request.addEventListener("load", () => {
-      let data;
+      let data = null;
       try {
         data = JSON.parse(request.responseText);
       } catch {
-        data = {};
+        data = null;   // not JSON, therefore not this server — see api()
       }
-      if (request.status >= 200 && request.status < 300) {
+      if (data !== null && request.status >= 200 && request.status < 300) {
         resolve(data);
         return;
       }
@@ -522,9 +550,16 @@ function uploadImage(blob, { fileName, width, height, deferTrace }, onProgress) 
       // because the picture is genuinely unusable, or because this route never
       // reached it intact — the caller tries the other route before deciding.
       const failure = new Error(
-        data.error || `That picture could not be loaded (${request.status}).`
+        data === null
+          ? `The upload was answered by something other than Palette Trace `
+            + `(HTTP ${request.status}).`
+          : data.error || `That picture could not be loaded (${request.status}).`
       );
-      failure.recoverable = request.status >= 400 && request.status < 500;
+      // A reply that is not this server's JSON is the very case the fallback
+      // exists for — something in the middle mangled the raw route — so it is
+      // worth trying the long way round before giving up on the picture.
+      failure.recoverable =
+        data === null || (request.status >= 400 && request.status < 500);
       reject(failure);
     });
     request.addEventListener("error", () => reject(new Error("The picture could not be sent.")));
