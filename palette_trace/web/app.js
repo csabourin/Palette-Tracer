@@ -13,6 +13,11 @@
 const urlParams = new URLSearchParams(window.location.search);
 const sessionToken = urlParams.get("token");
 
+//: The settings schema allows 1–64 palette entries (image-settings-v1). The
+//: interface no longer has a number to type, so it enforces the ceiling where
+//: the palette grows instead.
+const MAX_ENTRIES = 64;
+
 // -------------------------------------------------------------------------
 // Wording
 //
@@ -125,6 +130,10 @@ const state = {
   sampleMode: "exact",
   //: Where the magnifier is aimed, in source-pixel coordinates.
   target: null,
+  //: Set when picking was started from the palette sheet, which has to close to
+  //: let the picture be touched at all. Picking started from the toolbar leaves
+  //: it false, so ending there does not open a sheet nobody asked for.
+  pickReturnsToPalette: false,
 
   openScanId: null,
   colourSheet: null,
@@ -417,18 +426,46 @@ function colorNotations(rgb) {
 // API client
 // -------------------------------------------------------------------------
 
+/**
+ * Every API call, and the one place that can tell "this failed" apart from
+ * "something else answered".
+ *
+ * This server replies in JSON to every path under /api/, success or failure.
+ * So a reply that is not JSON did not come from it: a proxy in front, a port
+ * where nothing is listening, an address that reaches something else entirely.
+ * Reporting that as "something went wrong" blames this application for a
+ * problem that is not in it, and leaves the one useful fact — that the answer
+ * came from somewhere else — unsaid.
+ */
 async function api(path, { method = "GET", body, quiet = false } = {}) {
   const res = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  let data;
+
+  let raw = "";
   try {
-    data = await res.json();
+    raw = await res.text();
   } catch {
-    data = {};
+    /* a body that cannot be read is handled as an unparseable one */
   }
+
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = null;   // not JSON, therefore not this server
+  }
+
+  if (data === null) {
+    const message = `${path} was answered by something other than Palette Trace `
+      + `(HTTP ${res.status}). Check the address you opened, and anything sitting `
+      + `in front of the server.`;
+    if (!quiet) showAlert(message);
+    throw new Error(message);
+  }
+
   if (!res.ok) {
     const message = data.error || `Something went wrong (${res.status}).`;
     if (!quiet) showAlert(message);
@@ -499,13 +536,13 @@ function uploadImage(blob, { fileName, width, height, deferTrace }, onProgress) 
       if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
     });
     request.addEventListener("load", () => {
-      let data;
+      let data = null;
       try {
         data = JSON.parse(request.responseText);
       } catch {
-        data = {};
+        data = null;   // not JSON, therefore not this server — see api()
       }
-      if (request.status >= 200 && request.status < 300) {
+      if (data !== null && request.status >= 200 && request.status < 300) {
         resolve(data);
         return;
       }
@@ -513,9 +550,16 @@ function uploadImage(blob, { fileName, width, height, deferTrace }, onProgress) 
       // because the picture is genuinely unusable, or because this route never
       // reached it intact — the caller tries the other route before deciding.
       const failure = new Error(
-        data.error || `That picture could not be loaded (${request.status}).`
+        data === null
+          ? `The upload was answered by something other than Palette Trace `
+            + `(HTTP ${request.status}).`
+          : data.error || `That picture could not be loaded (${request.status}).`
       );
-      failure.recoverable = request.status >= 400 && request.status < 500;
+      // A reply that is not this server's JSON is the very case the fallback
+      // exists for — something in the middle mangled the raw route — so it is
+      // worth trying the long way round before giving up on the picture.
+      failure.recoverable =
+        data === null || (request.status >= 400 && request.status < 500);
       reject(failure);
     });
     request.addEventListener("error", () => reject(new Error("The picture could not be sent.")));
@@ -1194,6 +1238,13 @@ function setPicking(on) {
   } else {
     state.target = null;
     hideLoupe();
+    // Picking that was started from the palette sheet returns to it, so adding
+    // several colours in a row does not mean reopening the sheet by hand each
+    // time. Picking started from the toolbar returns to the picture.
+    if (state.pickReturnsToPalette) {
+      state.pickReturnsToPalette = false;
+      openPaletteSheet();
+    }
   }
   renderCanvas();
 }
@@ -1466,8 +1517,11 @@ function pinEntryTo(entry, hex, chroma) {
 /**
  * Adds a colour to the palette.
  *
- * Adding is an additive act: if every slot is already spoken for, the palette
- * grows rather than quietly overwriting a colour the user chose earlier.
+ * Adding always makes the palette longer. It used to consume an automatic slot
+ * first, which kept the total steady back when a separate number decided how
+ * many colours there were. That number is gone: the palette *is* the list, so
+ * an add that silently replaced one of its rows would be a lie about what the
+ * gesture did. Colours that are not wanted are removed from the palette sheet.
  */
 async function addPinnedColour(hex, { name, announceAs } = {}) {
   const entries = state.settings.palette.entries;
@@ -1478,18 +1532,20 @@ async function addPinnedColour(hex, { name, announceAs } = {}) {
     return existing;
   }
 
+  if (entries.length >= MAX_ENTRIES) {
+    showAlert(`A trace can hold ${MAX_ENTRIES} colours. Remove one before adding another.`);
+    return null;
+  }
+
   pushHistory();
 
   const { r, g, b } = hexToRgb01(hex);
   const { C } = srgbToOklch(r, g, b);
-  let target = entries.find((entry) => entry.kind === "automatic");
 
-  if (!target) {
-    target = createEntry(entries.length);
-    entries.push(target);
-    state.settings.palette.layerOrder.push(target.id);
-    state.settings.scanCount = entries.length;
-  }
+  const target = createEntry(entries.length);
+  entries.push(target);
+  state.settings.palette.layerOrder.push(target.id);
+  state.settings.scanCount = entries.length;
 
   pinEntryTo(target, hex, C);
   target.name = name || `Picked ${hex}`;
@@ -1497,6 +1553,38 @@ async function addPinnedColour(hex, { name, announceAs } = {}) {
   await pushSettings();
   announce(`${announceAs || `Added ${hex}`}. It now covers ${coverageText(target.id)}.`);
   return target;
+}
+
+/**
+ * Removes a colour from the palette.
+ *
+ * Shared by the palette sheet and by one colour's own sheet, so the two cannot
+ * drift into removing different amounts of an entry.
+ */
+async function removeEntry(entry) {
+  const entries = state.settings.palette.entries;
+  const index = entries.indexOf(entry);
+  if (index < 0) return;
+
+  // A trace with no colours has nothing to draw, and the settings schema
+  // requires at least one. The buttons that get here are disabled at this
+  // point; this guards the path rather than trusting them.
+  if (entries.length <= 1) {
+    showAlert("A trace needs at least one colour.");
+    return;
+  }
+
+  pushHistory();
+  entries.splice(index, 1);
+  state.settings.palette.layerOrder =
+    state.settings.palette.layerOrder.filter((id) => id !== entry.id);
+  if (state.settings.palette.backgroundEntryId === entry.id) {
+    state.settings.palette.backgroundEntryId = null;
+  }
+  state.settings.scanCount = entries.length;
+
+  await pushSettings();
+  announce(`Removed ${entry.name}. ${entries.length} ${entries.length === 1 ? "colour" : "colours"} left.`);
 }
 
 function addPickedColour(hex) {
@@ -1636,9 +1724,9 @@ function withFocusPreserved(render) {
 function renderAll() {
   withFocusPreserved(() => {
     renderSwatches();
+    renderPaletteSheet();
     if (state.openScanId) renderScanSheet(state.openScanId);
   });
-  renderCounts();
   renderDestinationSelection();
   renderSetupControls();
   renderWarnings();
@@ -1648,8 +1736,105 @@ function renderAll() {
   renderCanvas();
 }
 
-function renderCounts() {
-  document.getElementById("input-scans").value = state.settings.scanCount;
+/**
+ * The palette sheet: every colour in the trace, with a way to remove each one.
+ *
+ * This is where the number of colours lives now. It reads from the same entries
+ * and the same helpers as the swatch strip, so the two views cannot disagree
+ * about what is in the palette.
+ */
+function renderPaletteSheet() {
+  const sheet = document.getElementById("sheet-palette");
+  if (!sheet || !sheet.open) return;
+
+  const list = document.getElementById("palette-manager-list");
+  const entries = state.settings.palette.entries;
+  const backgroundId = state.settings.palette.backgroundEntryId;
+  const localWarnings = perScanWarnings();
+  const onlyOne = entries.length <= 1;
+
+  document.getElementById("palette-count").textContent = onlyOne
+    ? "One colour. Add another from the picture below."
+    : `${entries.length} colours, back to front.`;
+
+  const row = (options) => `
+    <li class="pm-row ${options.className || ""}">
+      <span class="pm-chip ${options.hex ? "" : "is-empty"}" aria-hidden="true"
+            ${options.hex ? `style="background-color:${escapeHtml(options.hex)}"` : ""}></span>
+      <span class="pm-text">
+        <span class="pm-name">${escapeHtml(options.name)}</span>
+        <span class="pm-meta">${escapeHtml(options.meta)}</span>
+      </span>
+      ${options.action || ""}
+    </li>
+  `;
+
+  const removeButton = (entry) => `
+    <button type="button" class="btn btn-icon pm-remove" data-remove-id="${escapeHtml(entry.id)}"
+            aria-label="Remove ${escapeHtml(entry.name)}" title="Remove"
+            ${onlyOne ? "disabled" : ""}>
+      <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>
+    </button>
+  `;
+
+  // Layers the pipeline invented — a backdrop-coloured shape lifted in front of
+  // what encloses it — are listed so the palette is the whole truth, but they
+  // carry no Remove: there is nothing in the settings to remove them from.
+  const derived = state.scanResults.filter((scan) => scan.derived);
+
+  list.innerHTML = entries.map((entry) => {
+    const notes = [
+      entry.kind === "pinned" ? "picked by you" : "chosen for you",
+      resolvedHex(entry) || "no colour of its own yet",
+      coverageText(entry.id),
+      backgroundId === entry.id ? "the backdrop" : "",
+      entry.enabled === false ? "left out" : "",
+      (localWarnings.get(entry.id) || []).length ? "worth a look" : "",
+    ].filter(Boolean);
+
+    return row({
+      hex: resolvedHex(entry),
+      name: entry.name,
+      meta: notes.join(" · "),
+      className: entry.enabled === false ? "is-disabled" : "",
+      action: removeButton(entry),
+    });
+  }).join("") + derived.map((scan) => row({
+    hex: scan.color,
+    name: scan.name,
+    meta: "added automatically in front",
+    className: "is-derived",
+    action: "",
+  })).join("");
+}
+
+function bindPaletteSheet() {
+  const sheet = document.getElementById("sheet-palette");
+
+  sheet.addEventListener("click", async (e) => {
+    const remove = e.target.closest("[data-remove-id]");
+    if (!remove) return;
+    const entry = findEntry(remove.dataset.removeId);
+    if (!entry) return;
+    await removeEntry(entry);
+    // The button that was just used no longer exists, so focus has to be put
+    // somewhere deliberate or a keyboard user is dropped back on <body>.
+    document.getElementById("btn-palette-pick").focus();
+  });
+
+  // The picture is behind this dialog, and a modal <dialog> is exactly what
+  // stops it being touched. Picking therefore closes the sheet, hands the
+  // gesture to the picture, and comes back when picking ends.
+  document.getElementById("btn-palette-pick").addEventListener("click", () => {
+    closeDialog(sheet);
+    state.pickReturnsToPalette = true;
+    setPicking(true);
+  });
+}
+
+function openPaletteSheet() {
+  openDialog(document.getElementById("sheet-palette"));
+  renderPaletteSheet();
 }
 
 function renderSwatches() {
@@ -1730,8 +1915,8 @@ function renderSwatches() {
   })).join("") + `
     <li>
       <button type="button" class="swatch swatch-add" id="btn-add-swatch"
-              aria-label="Add a colour" title="Add a colour">
-        <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+              aria-label="Add a colour from the picture" title="Add a colour from the picture">
+        <svg class="icon" aria-hidden="true"><use href="#i-dropper"/></svg>
       </button>
     </li>
   `;
@@ -2203,22 +2388,11 @@ function bindScanSheet() {
         await pushSettings();
         announce(`${entry.name} is ${entry.enabled ? "included" : "left out"}.`);
         break;
-      case "remove": {
-        pushHistory();
-        const entries = state.settings.palette.entries;
-        entries.splice(entries.indexOf(entry), 1);
-        state.settings.palette.layerOrder =
-          state.settings.palette.layerOrder.filter((id) => id !== entry.id);
-        if (state.settings.palette.backgroundEntryId === entry.id) {
-          state.settings.palette.backgroundEntryId = null;
-        }
-        state.settings.scanCount = entries.length;
+      case "remove":
         state.openScanId = null;
         closeDialog(sheet);
-        await pushSettings();
-        announce(`Removed ${entry.name}. ${entries.length} colours left.`);
+        await removeEntry(entry);
         break;
-      }
     }
   });
 
@@ -2336,17 +2510,20 @@ function moveEntryTo(id, position) {
 
 // -------------------------------------------------------------------------
 // Typing a colour
+//
+// Only ever to *change* a colour already in the palette, never to create one.
+// Colours enter the palette from the picture, through the picker. Typing stays
+// because a screen print or a vinyl cut sometimes has to hit an exact stated
+// value, which no amount of aiming at a photograph will land on.
 // -------------------------------------------------------------------------
 
-/** Opens the colour sheet, either to add a new colour or to change `entry`. */
+/** Opens the colour sheet to change `entry`. */
 function openColourSheet(entry) {
-  state.colourSheet = { entryId: entry ? entry.id : null };
+  state.colourSheet = { entryId: entry.id };
 
-  document.getElementById("sheet-colour-title").textContent =
-    entry ? `Change ${entry.name}` : "Add a colour";
-  document.getElementById("btn-colour-confirm").textContent = entry ? "Apply" : "Add";
+  document.getElementById("sheet-colour-title").textContent = `Change ${entry.name}`;
 
-  const start = entry ? entryHex(entry) : "#3B7DD8";
+  const start = entryHex(entry);
   document.getElementById("colour-input").value = start;
   document.getElementById("colour-native").value = start.toLowerCase();
   renderColourPreview();
@@ -2407,21 +2584,16 @@ async function confirmColourSheet() {
     }
   }
 
-  const target = state.colourSheet && state.colourSheet.entryId
-    ? findEntry(state.colourSheet.entryId)
-    : null;
+  const target = state.colourSheet && findEntry(state.colourSheet.entryId);
 
   closeDialog(document.getElementById("sheet-colour"));
+  if (!target) return;
 
-  if (target) {
-    pushHistory();
-    const { r, g, b } = hexToRgb01(hex);
-    pinEntryTo(target, hex, srgbToOklch(r, g, b).C);
-    await pushSettings();
-    announce(`${target.name} is now ${hex}.`);
-  } else {
-    await addPinnedColour(hex, { name: `Colour ${hex}`, announceAs: `Added ${hex}` });
-  }
+  pushHistory();
+  const { r, g, b } = hexToRgb01(hex);
+  pinEntryTo(target, hex, srgbToOklch(r, g, b).C);
+  await pushSettings();
+  announce(`${target.name} is now ${hex}.`);
 }
 
 function bindColourSheet() {
@@ -2587,7 +2759,7 @@ function bindSwatchReordering() {
   });
 
   list.addEventListener("click", (e) => {
-    if (e.target.closest("#btn-add-swatch")) openColourSheet(null);
+    if (e.target.closest("#btn-add-swatch")) setPicking(true);
   });
 }
 
@@ -2599,11 +2771,12 @@ function bindWorkspace() {
   bindStageGestures();
   bindScanSheet();
   bindColourSheet();
+  bindPaletteSheet();
   bindSwatchReordering();
 
   document.getElementById("btn-pick").addEventListener("click", () => setPicking(!state.picking));
   document.getElementById("btn-stop-picking").addEventListener("click", () => setPicking(false));
-  document.getElementById("btn-add-colour").addEventListener("click", () => openColourSheet(null));
+  document.getElementById("btn-colours").addEventListener("click", openPaletteSheet);
 
   document.querySelector(".pickbar .segmented").addEventListener("click", (e) => {
     const button = e.target.closest("[data-sample]");
@@ -2629,16 +2802,6 @@ function bindWorkspace() {
   document.getElementById("btn-zoom-actual").addEventListener("click", () => {
     const { width, height } = viewportSize();
     setScaleAbout(1, width / 2, height / 2);
-  });
-
-  document.getElementById("input-scans").addEventListener("change", (e) => {
-    setScanCount(parseInt(e.target.value, 10));
-  });
-  document.getElementById("btn-more").addEventListener("click", () => {
-    setScanCount(state.settings.scanCount + 1);
-  });
-  document.getElementById("btn-fewer").addEventListener("click", () => {
-    setScanCount(state.settings.scanCount - 1);
   });
 
   document.getElementById("btn-auto-backdrop").addEventListener("click", toggleAutoBackdrop);
@@ -2746,16 +2909,6 @@ function onGlobalKeyDown(e) {
 
   if (e.key === "i" || e.key === "p") { e.preventDefault(); setPicking(!state.picking); }
   if (e.key === "Escape" && state.picking) { e.preventDefault(); setPicking(false); }
-}
-
-function setScanCount(value) {
-  const next = Math.max(1, Math.min(64, value || 1));
-  if (next === state.settings.scanCount) return;
-  pushHistory();
-  state.settings.scanCount = next;
-  pushSettings().then(() => {
-    announce(`Now tracing ${next} ${next === 1 ? "colour" : "colours"}.`);
-  });
 }
 
 async function setBackgroundEntry(entryId) {

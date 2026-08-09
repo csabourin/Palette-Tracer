@@ -6,17 +6,17 @@
 
 ## Session metadata
 
-* **Last updated:** 2026-08-08
+* **Last updated:** 2026-08-09
 * **Updated by:** Claude
-* **Current branch:** `claude/mobile-friendly-interface-redesign-yjvcyb`, branched from `d3f5cf1` (`origin/master`, PR #4 merged)
+* **Current branch:** `claude/color-picker-ux-api-yuag4d`, branched from `94e3614` (`origin/master`, PR #7 merged)
 * **Current phase:** Phase 2 — Portable interface
-* **Primary objective this session:** Make the interface usable on a phone by someone who does not know what a "scan" or a "colour reach" is: browser image loading, a magnifier colour picker, progressive disclosure, and outcome-named controls.
+* **Primary objective this session:** Make the palette the only statement of how many colours the trace has, and make picking from the picture the only way a colour gets into it.
 
 ## Start here
 
 1. `git status` / `git log --oneline -5` — confirm this matches what's described below.
-2. `.venv/bin/python -m pytest tests/ -q --ignore=tests/unit/test_schema.py --ignore=tests/unit/test_selection.py` → expect `337 passed`. See "Environment limitation" for why those two are ignored.
-3. Read `docs/IMPLEMENTATION_STATUS.md` — updated this session, including four new Known blockers.
+2. `uv sync && uv run --with pytest pytest tests/ -q --ignore=tests/unit/test_schema.py --ignore=tests/unit/test_selection.py` → expect `376 passed`. See "Environment limitation" for why those two are ignored.
+3. Read `docs/IMPLEMENTATION_STATUS.md` — updated this session.
 
 ## Environment limitation (read before believing a red suite)
 
@@ -29,7 +29,77 @@ Consequences, both environmental rather than regressions:
 
 Both were already true before this session's changes — verified by stashing them and re-running.
 
-## What changed this session
+## What changed this session (2026-08-09)
+
+### The palette is the number of colours
+
+The toolbar used to carry a `− 4 +` stepper that set `scanCount`, and an **Add**
+button that opened a colour wheel. Between them they said two contradictory
+things: that the number of colours was a figure to type, and that a colour could
+be invented rather than found in the picture.
+
+Both are gone. In their place, a **Colours** button opens `#sheet-palette`,
+which lists every entry — picked and automatic alike — with its colour, its
+coverage and a Remove button, and offers one way to add: *Add a colour from the
+picture*, which hands the gesture to the existing picker.
+
+* `scanCount` did not change meaning and the API did not change at all. The
+  interface holds `scanCount === palette.entries.length` at every mutation
+  instead of setting it directly. §10.4 already required the two to be equal.
+* `addPinnedColour` now always appends. It used to consume the first automatic
+  entry, which kept the total steady back when a separate number owned it; with
+  the list as the count, an add that replaced a row would misreport itself.
+* The removal logic moved out of the scan sheet into `removeEntry`, shared by
+  both places, and refuses the last remaining entry (the schema requires ≥ 1).
+* `#sheet-colour` survives, reachable only through **Change** on an entry that
+  already exists — a screen print or a cut file is sometimes specified by an ink
+  reference that no amount of aiming at a photograph will land on.
+* Picking started from the palette sheet returns to it when picking ends
+  (`state.pickReturnsToPalette`); picking started from the toolbar does not, so
+  the toolbar never opens a sheet nobody asked for.
+
+Known interaction, not a defect: Undo lives in the header, so undoing a removal
+means closing the sheet first. That is what a modal `<dialog>` is for, and it is
+true of every other sheet in this interface.
+
+### The Replit failures were in `.replit`, not in the code
+
+Two failures were reported from Replit — an unexplained message when adding a
+colour, and a 404 from the main button — on the build at `94e3614`, before the
+palette sheet existed.
+
+The flow Replit actually serves was then driven end to end in Chromium: launch
+with **no image**, load a bitmap in the browser, pick a colour, change one by
+typing, press the blue button. Against the current tree *and* against `94e3614`,
+every `/api/*` call returned 200 and the SVG downloaded. The code was not at
+fault, so `.replit` was:
+
+* it declared **two ports** — `[env] PORT = "8080"` mapped to external 80, and a
+  workflow forcing `PORT=8000` mapped to external 8000 — so the address the
+  webview opens by default and the port actually bound were not the same. What
+  answers at an address where nothing is listening is Replit's proxy, and its
+  404 is indistinguishable, from inside the page, from ours;
+* the workflow ran `.pythonlibs/bin/python3 -m palette_trace.standalone`
+  **directly**, skipping the `pip install -e .` in `scripts/replit_run.sh`. No
+  numpy, no pillow, no scipy, no potracer — and possibly no such interpreter;
+* the two entry points did different things: the script traced the bundled
+  sample into `/tmp`, the workflow started with no image.
+
+Now: one port (`8000 → 80`), one entry point (`scripts/replit_run.sh`, which
+installs first), and the script starts **without an image** so the user brings
+their own picture, which is the only thing that makes sense on a hosted webview.
+
+`web/app.js::api()` also learned to tell "this failed" from "something else
+answered": a reply that will not parse as JSON did not come from this server,
+and now says so instead of blaming Palette Trace. Verified by serving `web/`
+from `python -m http.server`, which 404s every API path — the old build said
+"Something went wrong (404)", which is exactly the unexplained 404 that was
+reported.
+
+**Unverified, and only you can:** none of this is proof until Run is pressed
+inside an actual Replit container.
+
+## What changed in the previous session (2026-08-08)
 
 ### The interface was rewritten
 
@@ -74,7 +144,15 @@ Two deliberate reductions, both recorded in the spec text itself:
 * the six preview modes became three — the quantized, vector and production modes rendered identical geometry, so offering them separately implied a difference the pipeline does not produce;
 * "Preview quality" was dropped from the main controls, because §17.4 preview scaling is unimplemented and §9.2.1 forbids showing a control that does nothing.
 
-## Validation performed
+## Validation performed this session (2026-08-09)
+
+| Command | Result | Notes |
+| ------- | ------ | ----- |
+| `uv run --with pytest pytest tests/ --ignore=test_schema.py --ignore=test_selection.py` | Passed | `376 passed`, unchanged by this session's work — the change is entirely in `web/` |
+| Scripted Chromium session, 390×844 and 1440×900 | Passed | 18 assertions: the stepper and the add-a-colour button are absent; the sheet lists four entries with colour and coverage; *Add from the picture* closes the sheet, picks, and returns with five; removal shortens the list and moves focus deliberately; the last entry's Remove is disabled; Escape closes; no console errors |
+| Scripted Chromium session, second pass | Passed | The strip's `+` picks without opening the sheet; undo reverses both an add and a removal; the colour sheet is reachable only as "Change …" with an Apply button; Remove is reachable and usable from the keyboard |
+
+## Validation performed in the previous session (2026-08-08)
 
 | Command | Result | Notes |
 | ------- | ------ | ----- |
@@ -102,10 +180,12 @@ Also fixed: duplicate backend warnings (one message repeated once per scan), and
 * [ ] No accessibility audit was run this session. Keyboard paths were exercised; a screen reader was not.
 * [ ] The Inkscape host's changes (`session.image_name`, `can_load_image` refusing uploads) are unexercised — `inkex` will not install here.
 * [ ] Drag-to-reorder in the swatch list was implemented but not clicked; the Move back / Move forward buttons in each colour's sheet were.
+* [ ] The palette sheet has no reordering of its own. Layer order is still changed from the strip or from a colour's sheet, and whether that separation reads as sensible has not been tried on anyone.
+* [ ] A palette grown well past a handful of colours was never looked at: the sheet scrolls, but no one has picked twenty colours from a photograph to see what that list becomes.
 
 ## Immediate next actions
 
-1. **Add `tests/ui/` with Playwright.** Four real defects this session were only findable in a browser, and nothing in the repository would catch them coming back. This is the highest-value gap in Phase 2.
+1. **Add `tests/ui/` with Playwright.** Still the highest-value gap in Phase 2, and this session widened it: the palette sheet was verified by a scripted browser session that is not in the repository, exactly like the interface work before it. The 18 assertions written for it are the outline of that suite.
 2. Fix the container so `inkex` installs, or make those two test modules skip when it is absent, so the Phase 0 gate is meaningful again.
 3. Accessibility pass with a real screen reader, plus axe-core, before calling §29 Verified.
 4. §27 missing-source dialog — still requires deferring the Inkscape host's early `PaletteTraceError`.

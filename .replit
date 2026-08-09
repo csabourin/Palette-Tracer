@@ -6,17 +6,19 @@ modules = ["python-3.12"]
 channel = "stable-24_05"
 packages = ["libxcrypt", "pkg-config", "xsimd"]
 
+# One port, mapped to the default external one so the webview finds the
+# interface at the address it opens by itself. There used to be two mappings
+# and two entry points that disagreed about which to use: the Run button bound
+# 8000 while `$PORT` said 8080, so half the time the webview pointed at a port
+# where nothing was listening — and everything sent there is answered by
+# Replit's proxy rather than by this application.
 [[ports]]
 localPort = 8000
-externalPort = 8000
-
-[[ports]]
-localPort = 8080
 externalPort = 80
 
 [env]
 PYTHONUNBUFFERED = "1"
-PORT = "8080"
+PORT = "8000"
 
 [workflows]
 runButton = "Project"
@@ -34,9 +36,14 @@ args = "Palette Trace Web"
 name = "Palette Trace Web"
 author = "agent"
 
+# The same entry point as the `run` key above. It calls the interpreter through
+# the script so the dependencies are installed first: invoking
+# `.pythonlibs/bin/python3 -m palette_trace.standalone` directly skipped
+# `pip install -e .`, so numpy, pillow, scipy and potracer were not necessarily
+# there — and a process that dies on import leaves the port empty.
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=8000 .pythonlibs/bin/python3 -m palette_trace.standalone --no-browser"
+args = "bash scripts/replit_run.sh"
 waitForPort = 8000
 
 [workflows.workflow.metadata]
