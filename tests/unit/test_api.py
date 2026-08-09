@@ -464,3 +464,98 @@ class TestUserPresetEndpoints:
     def test_apply_unknown_preset_is_a_404(self, session):
         status, body = call(session, "/api/user_presets/apply", "POST", {"presetUuid": "no-such-id"})
         assert status == 404
+
+
+class TestPreviewScaling:
+    """
+    §17.4: interaction traces a reduced copy, delivery does not.
+
+    The session fixture's bitmap is well inside the preview budget, so these
+    force the question with an explicit budget rather than a large image — the
+    rule under test is which endpoints preview, not what the budget is.
+    """
+
+    def large_session(self, monkeypatch, session, budget=64):
+        from palette_trace.server import api as api_module
+
+        monkeypatch.setattr(api_module, "PREVIEW_BUDGET_PIXELS", budget)
+        return session
+
+    def test_a_settings_change_previews(self, session, monkeypatch):
+        self.large_session(monkeypatch, session)
+        status, body = call(session, "/api/update_settings", "POST",
+                            {"settings": session.settings})
+
+        assert status == 200
+        assert body["previewScale"] < 1.0
+        assert session.pipeline_output_is_preview
+
+    def test_a_small_picture_is_previewed_at_full_resolution(self, session):
+        """Below the budget there is nothing to reduce, and §17.4 has no work."""
+        status, body = call(session, "/api/update_settings", "POST",
+                            {"settings": session.settings})
+
+        assert status == 200
+        assert body["previewScale"] == 1.0
+        assert not session.pipeline_output_is_preview
+
+    def test_export_retraces_at_full_resolution(self, session, monkeypatch):
+        """
+        The delivered file is never a preview. A cached preview is geometry from
+        a reduced copy of the bitmap: fine to look at, not what was asked for.
+        """
+        self.large_session(monkeypatch, session)
+        call(session, "/api/update_settings", "POST", {"settings": session.settings})
+        assert session.pipeline_output_is_preview
+
+        status, body = call(session, "/api/export", "POST")
+
+        assert status == 200
+        assert not session.pipeline_output_is_preview
+        assert f'width="{session.image_source.intrinsic_width}"' in body["svg"]
+
+    def test_applying_retraces_at_full_resolution(self, session, monkeypatch):
+        """Both hosts commit `pipeline_output` straight into a document."""
+        self.large_session(monkeypatch, session)
+        call(session, "/api/update_settings", "POST", {"settings": session.settings})
+
+        assert call(session, "/api/apply", "POST")[0] == 200
+        assert session.is_applied
+        assert not session.pipeline_output_is_preview
+
+    def test_applying_leaves_the_settings_agreeing_with_the_committed_file(
+        self, session, monkeypatch
+    ):
+        """
+        The sidecar is written from the settings, the SVG from the output. If
+        Apply re-resolved the palette at full resolution and did not write it
+        back, the two would disagree about the colours.
+        """
+        self.large_session(monkeypatch, session)
+        call(session, "/api/update_settings", "POST", {"settings": session.settings})
+        call(session, "/api/apply", "POST")
+
+        committed = [
+            ((e.get("output") or {}).get("color") or {}).get("srgb")
+            for e in session.pipeline_output["palette_entries"]
+        ]
+        stored = [
+            ((e.get("output") or {}).get("color") or {}).get("srgb")
+            for e in session.settings["palette"]["entries"]
+        ]
+        assert stored == committed
+
+    def test_a_previewed_result_still_describes_the_source_frame(
+        self, session, monkeypatch
+    ):
+        """§17.4 converts thresholds in and geometry out; the frame never moves."""
+        self.large_session(monkeypatch, session)
+        _, body = call(session, "/api/update_settings", "POST",
+                       {"settings": session.settings})
+
+        width = session.image_source.intrinsic_width
+        for scan in body["scanResults"]:
+            for path in scan["pathDatas"]:
+                for token in path.split():
+                    if not token.isalpha():
+                        assert float(token) <= width + 0.5

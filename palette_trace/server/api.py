@@ -19,6 +19,10 @@ from palette_trace.presets.destination import (
     get_destination_preset,
     list_destination_ids,
 )
+from palette_trace.presets.preview_scaling import (
+    PREVIEW_BUDGET_PIXELS,
+    preview_scale_for,
+)
 from palette_trace.presets.profiles import get_builtin_profile, list_profile_ids
 from palette_trace.presets.user_presets import (
     apply_configuration_patch,
@@ -170,16 +174,49 @@ def _client_bitmap_size(body: dict, headers: dict) -> tuple[int, int] | None:
     return (width, height) if width > 0 and height > 0 else None
 
 
-def _run_pipeline(session) -> dict:
-    """Re-runs the controller for the session's current settings."""
-    session.controller = PipelineController(session.image_source, session.settings)
-    session.pipeline_output = session.controller.run_pipeline()
-    return session.pipeline_output
+def _preview_scale(session) -> float:
+    """
+    The factor an interactive re-trace of this session's bitmap runs at (§17.4).
+
+    Previewing is the whole reason §17.4 exists: a settings change should answer
+    while the user is still looking at the control they moved. What is committed
+    is never previewed — see `_run_pipeline`.
+    """
+    source = session.image_source
+    if source is None:
+        return 1.0
+    return preview_scale_for(
+        source.intrinsic_width, source.intrinsic_height, PREVIEW_BUDGET_PIXELS
+    )
+
+
+def _run_pipeline(session, preview: bool = False) -> dict:
+    """
+    Re-runs the controller for the session's current settings.
+
+    `preview` decides how much bitmap is traced, never what comes back: the
+    controller converts the pixel-denominated settings on the way in and the
+    geometry on the way out, so both answers are in source pixels either way
+    (§17.4).
+    """
+    scale = _preview_scale(session) if preview else 1.0
+    session.controller = PipelineController(session.image_source, session.settings, scale)
+    output = session.controller.run_pipeline()
+    output["previewScale"] = session.controller.effective_scale
+    session.pipeline_output = output
+    session.pipeline_output_is_preview = session.controller.is_preview
+    return output
 
 
 def _settings_response(session, status: str = "success") -> dict:
-    """The common response shape after any mutation that re-runs the pipeline."""
-    output = _run_pipeline(session)
+    """
+    The common response shape after any mutation that re-runs the pipeline.
+
+    Every caller of this is a settings change the user is waiting on, so it
+    previews. The two endpoints that produce a deliverable — `/api/export` and
+    the Apply path — deliberately do not go through here.
+    """
+    output = _run_pipeline(session, preview=True)
     session.settings["palette"]["entries"] = output["palette_entries"]
     return {
         "status": status,
@@ -188,6 +225,10 @@ def _settings_response(session, status: str = "success") -> dict:
         "claimStats": output["claims_stats"],
         "scanResults": output["scan_results"],
         "warnings": output.get("warnings", []),
+        # What the geometry in `scanResults` was traced from, as a fraction of
+        # the source. The interface states it rather than leaving the user to
+        # wonder why a preview is smoother than the file they downloaded.
+        "previewScale": output["previewScale"],
     }
 
 
@@ -243,8 +284,15 @@ def _build_result_svg(session) -> str:
     Shared by the download path and the Inkscape/CLI commit path so that a
     downloaded result carries the same `pt:` provenance as a written one
     (§9.4.4, §10.3).
+
+    Always traced at full resolution. A cached preview is geometry from a
+    reduced copy of the bitmap: correct to look at, and not what anyone asked to
+    be given. §17.4 makes interaction cheap by previewing — it does not make the
+    delivered file a preview.
     """
-    output = session.pipeline_output or _run_pipeline(session)
+    output = session.pipeline_output
+    if output is None or session.pipeline_output_is_preview:
+        output = _run_pipeline(session)
     backend = output.get("backend", {})
     source = session.image_source
 
@@ -521,6 +569,19 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         return (200, _settings_response(session))
 
     elif path == "/api/apply" and method == "POST":
+        # Both hosts commit `session.pipeline_output` directly — into the open
+        # Inkscape document, or into the configured SVG file. After a settings
+        # change that output is a preview (§17.4), so it is re-traced at full
+        # resolution first. This is the one request where the wait is the point:
+        # the user has asked for the result, not for a picture of it.
+        if session.pipeline_output is None or session.pipeline_output_is_preview:
+            output = _run_pipeline(session)
+            # A preview resolves its automatic colours from the reduced copy,
+            # and those are the entries currently in the settings document. The
+            # full-resolution run has just resolved them again from the real
+            # pixels, so the settings — and the sidecar written from them — say
+            # the same thing as the file being committed.
+            session.settings["palette"]["entries"] = output["palette_entries"]
         session.is_applied = True
         return (200, {"status": "applied"})
 

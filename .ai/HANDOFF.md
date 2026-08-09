@@ -130,7 +130,7 @@ Keyboard picking exists and was tested: arrows move the sample point one source 
 * `standalone.py` now takes the image path as optional (`nargs="?"`); `run_without_source` serves the loading screen.
 * `AppSession.commit_target` resolves to `document` / `file` / `download`, and the interface names its primary button after it.
 * Loading a picture in a session that was launched with a path clears `output_path`, so the result cannot be written over an unrelated file's output. Covered by `test_standalone_host.py::test_swapping_the_image_in_the_browser_leaves_the_named_output_alone`.
-* Uploads above 4 MP are downscaled (`MAX_WORKING_PIXELS`) with a notice stating the traced dimensions, because §17.4 preview scaling does not exist and a 12 MP photo makes the pipeline look hung. Deterministic: fixed budget, explicit LANCZOS.
+* Uploads above 4 MP are downscaled (`MAX_WORKING_PIXELS`) with a notice stating the traced dimensions. Deterministic: fixed budget, explicit LANCZOS. The reason is now memory rather than speed — §17.4 preview scaling made interaction cheap at any size, but the decoded source stays resident (128 MB at the cap, ~466 MB peak RSS for a load-preview-export session) and export still traces the source itself.
 
 ### Server-side supporting changes
 
@@ -145,7 +145,7 @@ Keyboard picking exists and was tested: arrows move the sample point one source 
 Two deliberate reductions, both recorded in the spec text itself:
 
 * the six preview modes became three — the quantized, vector and production modes rendered identical geometry, so offering them separately implied a difference the pipeline does not produce;
-* "Preview quality" was dropped from the main controls, because §17.4 preview scaling is unimplemented and §9.2.1 forbids showing a control that does nothing.
+* "Preview quality" was dropped from the main controls. §17.4 preview scaling now exists, so the original reason (§9.2.1 forbids a control that does nothing) no longer applies; the SPEC §9.2.3 text was rewritten to give the reason that does — the preview budget is derived from the source's dimensions, so the factor is already the best one available and a control would only offer "worse".
 
 ## Validation performed this session (2026-08-09)
 
@@ -192,7 +192,7 @@ Also fixed: duplicate backend warnings (one message repeated once per scan), and
 2. Fix the container so `inkex` installs, or make those two test modules skip when it is absent, so the Phase 0 gate is meaningful again.
 3. Accessibility pass with a real screen reader, plus axe-core, before calling §29 Verified.
 4. §27 missing-source dialog — still requires deferring the Inkscape host's early `PaletteTraceError`.
-5. Implement §17.4 preview scaling, which would let `MAX_WORKING_PIXELS` be raised or removed.
+5. Measure peak memory on a real Replit container and decide whether `MAX_WORKING_PIXELS` can be raised. §17.4 preview scaling is implemented, so the cap is now a memory question rather than a pipeline one — see the requalified blocker in `docs/IMPLEMENTATION_STATUS.md`.
 
 ## Handoff freshness checks
 

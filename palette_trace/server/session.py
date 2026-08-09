@@ -34,6 +34,12 @@ class AppSession:
         self.settings = None
         self.controller = None
         self.pipeline_output = None
+        #: True when `pipeline_output` came from a reduced copy of the bitmap
+        #: (§17.4). The hosts commit `pipeline_output` straight to a document or
+        #: a file, so this is what stops a preview being delivered as the
+        #: result. False by default: a caller that runs the pipeline itself,
+        #: such as the Inkscape host, is running it at full resolution.
+        self.pipeline_output_is_preview = False
         self._is_applied = False
         self._is_cancelled = False
         #: Set the moment the session reaches either terminal state. The server

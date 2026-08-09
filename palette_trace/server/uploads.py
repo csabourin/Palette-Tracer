@@ -25,13 +25,25 @@ from palette_trace.image_source import DecodedImageSource
 #: allocate (§9.1 "restrict accepted payload size").
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 
-#: Above this pixel count the upload is resized before tracing. The pipeline
-#: runs every mask operation at full source resolution (§17.4 preview scaling
-#: is not implemented), so a 12-megapixel phone photo does not merely take
-#: longer — it takes long enough that the interface looks hung. Tracing a
-#: downscaled copy and saying so is better than either outcome. The limit is a
-#: fixed constant rather than a heuristic so that the same upload always
-#: produces the same geometry (§34.30).
+#: Above this pixel count the upload is resized before tracing.
+#:
+#: This used to stand on interaction cost: every mask operation ran at full
+#: source resolution, so a 12-megapixel phone photo made each settings change
+#: slow enough that the interface looked hung. §17.4 preview scaling removed
+#: that reason — interaction now traces a copy inside
+#: `presets.preview_scaling.PREVIEW_BUDGET_PIXELS` whatever the source is.
+#:
+#: What the cap now stands on is the other half, which preview scaling does not
+#: touch: committing and exporting trace the source itself, and the decoded
+#: source stays resident for the whole session. Measured at this limit, the
+#: decoded arrays are 128 MB (16 rgba + 48 sRGB + 16 alpha + 48 OKLCH) and a
+#: session that loads, previews and exports peaks at about 466 MB of RSS. Both
+#: figures scale linearly with pixel count, so the ceiling is now the memory of
+#: the smallest machine this is expected to run on rather than the clock —
+#: raising it is a measurement on that machine, not a judgement call.
+#:
+#: The limit is a fixed constant rather than a heuristic so that the same upload
+#: always produces the same geometry (§34.30).
 MAX_WORKING_PIXELS = 4_000_000
 
 #: Formats that make sense as a trace source. An upload whose type is not on
