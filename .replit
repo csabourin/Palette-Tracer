@@ -6,15 +6,20 @@ modules = ["python-3.12"]
 channel = "stable-24_05"
 packages = ["libxcrypt", "pkg-config", "xsimd"]
 
-# One port, mapped to the default external one so the webview finds the
-# interface at the address it opens by itself. There used to be two mappings
-# and two entry points that disagreed about which to use: the Run button bound
-# 8000 while `$PORT` said 8080, so half the time the webview pointed at a port
-# where nothing was listening — and everything sent there is answered by
-# Replit's proxy rather than by this application.
+# One port, published under the number Replit actually addresses this Repl by:
+# its console and its webview both point at `:8000`, so that is where the
+# interface has to be. Publishing it as external 80 instead — the default
+# domain — moved it out from under the address in use and left the old one
+# unreachable.
+#
+# What matters is that there is exactly *one* mapping. There used to be two,
+# with two entry points disagreeing about which to use: the Run button bound
+# 8000 while `$PORT` said 8080, so half the time the address being opened had
+# nothing listening behind it — and what answers there is Replit's proxy, not
+# this application, which is why it looked like a 404 from the app itself.
 [[ports]]
 localPort = 8000
-externalPort = 80
+externalPort = 8000
 
 [env]
 PYTHONUNBUFFERED = "1"
