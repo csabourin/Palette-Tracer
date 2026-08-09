@@ -427,7 +427,9 @@ The commit control MUST name where the result will go: into the open document, i
 
 The number of scans is deliberately absent from this list as a control of its own. §10.4 requires `palette.entries.length` to equal `scanCount`, so the palette already states the number; a separate number to type would be a second way to say the same thing, and the two would disagree the moment a colour was added or removed. The interface MUST NOT offer a scan-count control separate from the palette itself: the count follows the length of the list (§9.2.5).
 
-Preview quality is deliberately absent from this list. §17.4 preview scaling is not implemented, so a preview-quality control would be a control that does nothing, which §9.2.1 forbids. It returns to this list when preview scaling exists.
+Preview quality is deliberately absent from this list, and no longer because it would do nothing: §17.4 preview scaling is implemented, and a preview traces a reduced copy of the bitmap whenever the source exceeds the preview pixel budget. The reason it stays out is that the budget is derived from the source's own dimensions, so the factor is already the largest one that answers quickly — a control would offer the user a choice between "as good as it can be" and "worse", and the interface MUST NOT ask a question whose better answer it already knows.
+
+This holds only while the preview differs from the result in geometry alone. It does not: an automatic palette previewed from a reduced copy resolves its swatches from resampled pixels, so a swatch MAY differ slightly from the one the delivered file carries (§34.5 is satisfied against the bitmap actually traced). Should that drift prove to matter in use, the honest fix is to resolve the automatic palette at full resolution rather than to add a control asking the user to work around it; a preview-quality control returns to this list only if some case is found that neither of those addresses.
 
 ### 9.2.4 Preview panel
 

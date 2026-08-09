@@ -21,6 +21,10 @@ from palette_trace import sidecar
 from palette_trace.image_source import DecodedImageSource
 from palette_trace.errors import ImageSourceError, PaletteTraceError
 from palette_trace.pipeline.controller import PipelineController
+from palette_trace.presets.preview_scaling import (
+    PREVIEW_BUDGET_PIXELS,
+    preview_scale_for,
+)
 from palette_trace.server.app_server import launch_palette_trace_app
 from palette_trace.server.session import AppSession
 from palette_trace.settings import (
@@ -157,10 +161,23 @@ def main(argv=None) -> int:
     session.output_path = output_path
     session.settings = settings
     session.source_changed = source_has_changed(settings, source.fingerprint)
-    session.controller = PipelineController(source, settings)
+
+    # The trace that runs before the browser opens is a preview like any other
+    # (§17.4): nothing has been asked for yet, and on a large photograph this is
+    # the wait that used to happen before the interface appeared at all. Apply
+    # re-traces at full resolution, so the cost moves to the moment the result
+    # is actually wanted instead of being paid up front every run — including
+    # the runs that end in Cancel.
+    session.controller = PipelineController(
+        source, settings,
+        preview_scale_for(
+            source.intrinsic_width, source.intrinsic_height, PREVIEW_BUDGET_PIXELS
+        ),
+    )
 
     try:
         session.pipeline_output = session.controller.run_pipeline()
+        session.pipeline_output_is_preview = session.controller.is_preview
     except PaletteTraceError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

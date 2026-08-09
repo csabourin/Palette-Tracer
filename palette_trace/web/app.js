@@ -113,6 +113,10 @@ const state = {
   claimStats: {},
   warnings: [],
   previewMode: "source",
+  //: The fraction of the source the geometry on screen was traced from (§17.4).
+  //: 1 until the server says otherwise, so a picture inside the preview budget
+  //: — where the preview and the result are the same trace — says nothing.
+  previewScale: 1,
 
   sourceImage: null,
   //: Pixel data for the source, used for the magnifier's live readout without
@@ -755,6 +759,26 @@ function renderResizeNotice() {
   const notice = state.session.resizeNotice;
   el.hidden = !notice;
   el.textContent = notice || "";
+}
+
+/**
+ * Says so when the shapes on screen came from a reduced copy (§17.4).
+ *
+ * The picture is unchanged and so is the file that will be downloaded — only
+ * the traced geometry is drawn from a smaller bitmap, so that moving a control
+ * answers straight away. That is worth a line rather than silence: a preview
+ * whose curves are a little coarser than the result is confusing precisely
+ * until someone tells you it is deliberate.
+ */
+function renderPreviewNote() {
+  const el = document.getElementById("preview-note");
+  const scale = state.previewScale;
+  const scaling = typeof scale === "number" && scale > 0 && scale < 1;
+  el.hidden = !scaling;
+  el.textContent = scaling
+    ? `Previewing at ${Math.round(scale * 100)}% so changes keep up. `
+      + `The downloaded file is traced at full size.`
+    : "";
 }
 
 // -------------------------------------------------------------------------
@@ -1637,6 +1661,7 @@ function applyServerResponse(data) {
   state.scanResults = data.scanResults || [];
   state.claimStats = data.claimStats || {};
   state.warnings = data.warnings || [];
+  state.previewScale = data.previewScale;
   renderAll();
 }
 
@@ -1682,6 +1707,7 @@ async function runPush() {
     state.scanResults = data.scanResults || [];
     state.claimStats = data.claimStats || {};
     state.warnings = data.warnings || [];
+    state.previewScale = data.previewScale;
     renderAll();
   } finally {
     tracing.end();
@@ -1731,6 +1757,7 @@ function renderAll() {
   renderSetupControls();
   renderWarnings();
   renderModeCaption();
+  renderPreviewNote();
   renderBackdropButton();
   renderHistoryButtons();
   renderCanvas();

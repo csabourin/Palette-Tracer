@@ -46,8 +46,14 @@ from palette_trace.masks.geometry_policy import (
 from palette_trace.masks.label_map import LabelMap
 from palette_trace.masks.morphology import apply_mask_offset
 from palette_trace.masks.thin_features import preserve_thin_features
+from palette_trace.presets.preview_scaling import (
+    scale_measurement,
+    scale_profile,
+    scale_value,
+)
 from palette_trace.presets.profiles import resolve_entry_profile, unsupported_settings
 from palette_trace.settings import create_palette_entry
+from palette_trace.tracing.normalization import scale_svg_path_data
 from palette_trace.tracing.protocol import TraceRequest
 from palette_trace.tracing.registry import BackendRegistry
 
@@ -70,10 +76,58 @@ def _to_source_pixels(measurement: dict) -> float:
 class PipelineController:
     """Runs the full tracing pipeline for one image and one settings document."""
 
-    def __init__(self, source: DecodedImageSource, settings: dict):
-        self.source = source
+    def __init__(
+        self,
+        source: DecodedImageSource,
+        settings: dict,
+        preview_scale: float = 1.0,
+    ):
+        """
+        `preview_scale` below 1.0 traces a reduced copy of the bitmap (§17.4).
+
+        Everything the run produces is still expressed in source pixels: the
+        pixel-denominated settings are converted on the way in, and the geometry
+        is converted back on the way out. A caller asking for a preview is
+        choosing how much work to do, not what coordinate system to get back.
+
+        The default of 1.0 is the delivered result, and it is not merely
+        "scale by one" — `working_view` hands back this very object and both
+        conversions are skipped, so the full-resolution path is untouched.
+        """
+        self.requested_source = source
+        self.preview_scale = float(preview_scale)
+        # The bitmap actually traced. Every stage below reads `self.source`, so
+        # they neither know nor need to know that a preview is running.
+        self.source = source.working_view(self.preview_scale)
+        # What the reduction really came to. `working_view` rounds to whole
+        # pixels and refuses to enlarge, so the requested factor is not
+        # necessarily the one the thresholds must be converted by. Taken from
+        # the area, which makes the area conversion exact and the linear one the
+        # geometric mean of the two axes — they differ by a fraction of a pixel
+        # in a couple of thousand, and a single isotropic factor is what a
+        # radius, an offset and a path all want.
+        source_pixels = source.intrinsic_width * source.intrinsic_height
+        self.effective_scale = (
+            (self.source.intrinsic_width * self.source.intrinsic_height
+             / float(source_pixels)) ** 0.5
+            if source_pixels else 1.0
+        )
         self.settings = settings
         self.backend_registry = BackendRegistry()
+
+    @property
+    def is_preview(self) -> bool:
+        """True when the traced bitmap is not the source bitmap."""
+        return self.source is not self.requested_source
+
+    @property
+    def _to_source_units(self) -> float:
+        """The factor that takes traced geometry back to source pixels."""
+        return 1.0 if not self.is_preview else 1.0 / self.effective_scale
+
+    def _preview_pixels(self, measurement: dict) -> float:
+        """A `{value, unit}` geometry measurement in the pixels being traced."""
+        return _to_source_pixels(scale_measurement(measurement, self.effective_scale))
 
     # -- Stage 4: palette initialization ------------------------------------ #
 
@@ -218,7 +272,14 @@ class PipelineController:
 
         for entry in traced_entries:
             entry_id = entry["id"]
-            profile = resolve_entry_profile(entry, global_profile)
+            # §17.4: every threshold below is denominated in pixels, and the
+            # mask being cleaned is a preview's pixels when a preview is
+            # running. Converting here rather than at each call site is what
+            # stops a 16-pixel-area threshold being applied as 16 preview
+            # pixels — which would delete detail the delivered file keeps.
+            profile = scale_profile(
+                resolve_entry_profile(entry, global_profile), self.effective_scale
+            )
             resolved_profiles[entry_id] = profile
             mask_cfg = profile.get("mask", {})
 
@@ -246,14 +307,18 @@ class PipelineController:
         # -- Stage 9: destination geometry ----------------------------------- #
         preserve_silhouette = geometry_cfg.get("preserveOuterSilhouette", True)
 
+        # §17.4 again: underlap and trapping are linear distances applied to the
+        # mask. They carry their unit in a field rather than in their name, so
+        # `scale_profile` cannot see them and they are converted here — a trap
+        # left at its source-pixel width would be twice as wide at half scale.
         if policy == STACKED:
-            underlap_px = _to_source_pixels(geometry_cfg.get("underlap"))
+            underlap_px = self._preview_pixels(geometry_cfg.get("underlap"))
             for entry_id, mask in cleaned_masks.items():
                 cleaned_masks[entry_id] = apply_underlap_to_mask(
                     mask, subject_silhouette, underlap_px, preserve_silhouette
                 )
         elif policy == STACKED_TRAPPED:
-            trapping_px = _to_source_pixels(geometry_cfg.get("trapping"))
+            trapping_px = self._preview_pixels(geometry_cfg.get("trapping"))
             for entry_id, mask in cleaned_masks.items():
                 cleaned_masks[entry_id] = apply_trapping_to_mask(
                     mask, subject_silhouette, trapping_px, preserve_silhouette
@@ -261,9 +326,10 @@ class PipelineController:
         elif policy in EXCLUSIVE_POLICIES:
             cleaned_masks = enforce_exclusive_ownership(cleaned_masks, layer_order)
             if policy == SEPARATE_OPERATIONS:
+                minimum_area = global_profile.get("mask", {}).get("minimumRegionAreaPx2", 4)
                 warnings.extend(validate_operation_masks(
                     cleaned_masks,
-                    int(global_profile.get("mask", {}).get("minimumRegionAreaPx2", 4)),
+                    int(scale_value(minimum_area, self.effective_scale, 2)),
                 ))
 
         # A hole is subtracted last, after geometry: an underlap or a trap grows
@@ -319,9 +385,13 @@ class PipelineController:
 
             if is_background and background_output == REPLACE_WITH_RECTANGLE:
                 # §16.2: the rectangle uses the complete intrinsic source bounds,
-                # not the traced extent of the background.
+                # not the traced extent of the background. It is written in
+                # source pixels directly rather than in the preview's and scaled
+                # back, because §16.2 says *the* bounds and a round trip through
+                # a reduced copy would land a fraction of a pixel away from them.
                 scan["pathDatas"] = [background_rectangle_path(
-                    self.source.intrinsic_width, self.source.intrinsic_height
+                    self.requested_source.intrinsic_width,
+                    self.requested_source.intrinsic_height,
                 )]
                 scan["fillRule"] = "nonzero"
                 scan_results.append(scan)
@@ -352,7 +422,15 @@ class PipelineController:
                 profile=profile,
             ))
 
-            scan["pathDatas"] = list(result.svg_path_data)
+            # Back into source pixels. The backend traced whatever bitmap this
+            # run was given, so a preview's geometry is in preview coordinates —
+            # and every consumer downstream, from the preview panel to the SVG
+            # writer to the Inkscape commit, is written against the source's.
+            # Converting once here is what lets them stay that way.
+            scan["pathDatas"] = [
+                scale_svg_path_data(path, self._to_source_units)
+                for path in result.svg_path_data
+            ]
             scan["fillRule"] = result.fill_rule
             scan["warnings"].extend(result.warnings)
 

@@ -211,13 +211,13 @@ class TestConcurrency:
         spans = []
         lock = threading.Lock()
 
-        def _slow(_session):
+        def _slow(_session, preview=False):
             started = time.perf_counter()
             time.sleep(0.5)
             with lock:
                 spans.append((started, time.perf_counter()))
-            return {"palette_entries": [], "claims_stats": {},
-                    "scan_results": [], "warnings": []}
+            return {"palette_entries": [], "claims_stats": {}, "scan_results": [],
+                    "warnings": [], "previewScale": 1.0}
 
         monkeypatch.setattr(api, "_run_pipeline", _slow)
         return httpd, session, spans

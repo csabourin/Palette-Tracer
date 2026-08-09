@@ -32,6 +32,7 @@ class DecodedImageSource:
         self.alpha = self.rgba_data[:, :, 3].astype(np.float32) / 255.0
 
         self._oklch = None
+        self._working_views = {}
 
         # Calculate SHA-256 fingerprint
         hasher = hashlib.sha256()
@@ -56,6 +57,39 @@ class DecodedImageSource:
         if self._oklch is None:
             self._oklch = srgb_array_to_oklch(self.srgb)
         return self._oklch
+
+    def working_view(self, scale: float) -> "DecodedImageSource":
+        """
+        This source reduced to `scale`, for tracing a preview (§17.4).
+
+        Returns `self` at 1.0 and never enlarges, so the full-resolution path
+        costs nothing and stays literally the same object. Views are cached per
+        scale exactly as `oklch` is: an interactive session previews at one
+        factor over and over, and the OKLCH conversion of the reduced copy — the
+        expensive part — should happen once, not once per settings change.
+
+        LANCZOS is named rather than left to Pillow's default so that the same
+        image and the same factor always produce the same pixels (§34.30), which
+        is the same reason `uploads._resize_within_pixel_budget` names it.
+        """
+        if scale >= 1.0:
+            return self
+
+        target = (
+            max(1, int(self.intrinsic_width * scale)),
+            max(1, int(self.intrinsic_height * scale)),
+        )
+        if target == (self.intrinsic_width, self.intrinsic_height):
+            return self
+
+        view = self._working_views.get(target)
+        if view is None:
+            reduced = Image.fromarray(self.rgba_data, mode="RGBA").resize(
+                target, Image.LANCZOS
+            )
+            view = DecodedImageSource(reduced, self.mime_type)
+            self._working_views[target] = view
+        return view
 
 
 def load_image_source(href_or_data: str, is_data_uri: bool) -> DecodedImageSource:
