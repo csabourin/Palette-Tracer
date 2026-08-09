@@ -523,8 +523,8 @@ body[data-view="done"]      #view-done      { display: grid; }
   border-style: dashed; color: var(--ink-faint);
 }
 
-/* Five controls, one row, no scrolling: on the narrowest phone the tools share
-   what is left after the stepper, which has a fixed minimum of its own. */
+/* Four controls, one row, no scrolling: each takes an equal share of the width
+   on the narrowest phone. */
 .toolbar {
   display: flex; align-items: stretch; gap: 6px;
   padding: 0 12px 10px;
@@ -545,27 +545,49 @@ body[data-view="done"]      #view-done      { display: grid; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.stepper {
-  flex: 0 0 auto;
-  display: flex; align-items: center; gap: 2px;
-  padding: 2px;
-  background: var(--bg-sunken);
-  border-radius: var(--radius-sm);
+/* ------------------------------------------------------------------ *
+ *  The palette sheet
+ *
+ *  The list of colours *is* the number of colours, so this is the one place
+ *  that has to show the whole palette at a size a finger can act on.
+ * ------------------------------------------------------------------ */
+
+.palette-manager { list-style: none; margin: 0 0 12px; padding: 0; }
+
+.pm-row {
+  display: flex; align-items: center; gap: 10px;
+  min-height: var(--tap);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
 }
-.btn-step {
-  width: 32px; min-width: 32px; height: 44px; min-height: 44px;
-  padding: 0; background: none; border: none; color: var(--ink-soft);
+.pm-row:last-child { border-bottom: none; }
+
+.pm-chip {
+  flex: none; width: 34px; height: 34px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
 }
-/* Typed as `input[type="number"]` to outrank the generic field styling further
-   down, which would otherwise stretch this to the full width of the toolbar. */
-.stepper input[type="number"] {
-  width: 32px; min-height: 0; height: 44px; padding: 0;
-  font: inherit; font-size: .95rem; font-weight: 650; text-align: center;
-  color: var(--ink); background: none; border: none; border-radius: 0;
-  -moz-appearance: textfield;
+/* An entry with nothing left to claim has no colour of its own. A grey chip
+   would be a colour the picture does not contain, so it reads as empty. */
+.pm-chip.is-empty {
+  background:
+    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%) 0 0/12px 12px,
+    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%) 6px 6px/12px 12px;
 }
-.stepper input::-webkit-outer-spin-button,
-.stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+.pm-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pm-name {
+  font-size: .92rem; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pm-meta { font-size: .76rem; color: var(--ink-faint); }
+
+.pm-remove { flex: none; color: var(--danger); }
+
+.pm-row.is-disabled .pm-chip { opacity: .3; }
+.pm-row.is-derived .pm-chip { border-style: dashed; }
+
+.btn-menu-accent { color: var(--accent); border-color: var(--accent); }
+.btn-menu-accent .icon { color: var(--accent); }
 
 /* ------------------------------------------------------------------ *
  *  Sheets
@@ -815,7 +837,9 @@ details.nested > div { display: grid; gap: var(--gap); padding-top: 8px; }
   .swatch-add { width: 100%; min-height: 40px; }
 
   .toolbar { flex-wrap: wrap; padding: 10px 12px calc(12px + var(--safe-bottom)); border-top: 1px solid var(--line); }
-  .btn-tool { flex: 1 1 30%; }
+  /* Two by two in a 300px column: four across would cut the labels, and the
+     labels are what say what each tool does. */
+  .btn-tool { flex: 1 1 45%; }
   .tool-text { font-size: .68rem; }
 
   .sheet {

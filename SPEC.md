@@ -332,9 +332,9 @@ Portability is a primary architectural requirement. The core extension MUST not 
 4. Extension reads image-specific settings if present.
 5. Otherwise, it initializes settings from the Illustration destination preset.
 6. Extension opens the Palette Trace interface.
-7. User chooses a destination and scan count.
+7. User chooses a destination.
 8. Extension generates an automatic palette.
-9. User samples or manually enters important colours.
+9. User samples important colours from the picture, adding to the palette or removing from it.
 10. Picked colours become pinned exact output colours.
 11. User adjusts Colour reach and optional advanced channel tolerances.
 12. User assigns roles and per-scan trace profiles.
@@ -416,7 +416,7 @@ Where a setting's effect can be stated as a result, the interface SHOULD state i
 
 * Load a source bitmap (§9.4.2)
 * Destination
-* Number of scans
+* The palette (§9.2.5)
 * Tracing backend
 * Load preset
 * Save preset
@@ -424,6 +424,8 @@ Where a setting's effect can be stated as a result, the interface SHOULD state i
 * Commit the result
 
 The commit control MUST name where the result will go: into the open document, into the configured output file, or as a download (§9.4.2).
+
+The number of scans is deliberately absent from this list as a control of its own. §10.4 requires `palette.entries.length` to equal `scanCount`, so the palette already states the number; a separate number to type would be a second way to say the same thing, and the two would disagree the moment a colour was added or removed. The interface MUST NOT offer a scan-count control separate from the palette itself: the count follows the length of the list (§9.2.5).
 
 Preview quality is deliberately absent from this list. §17.4 preview scaling is not implemented, so a preview-quality control would be a control that does nothing, which §9.2.1 forbids. It returns to this list when preview scaling exists.
 
@@ -477,7 +479,11 @@ Reordering MUST be possible through both:
 
 Colour MUST NOT be the only means of identifying a scan. Every row therefore carries its output colour and its automatic/pinned status as text.
 
-Adding a picked colour MUST NOT overwrite a colour the user picked earlier. When no automatic entry remains to take it, the palette grows and the scan count follows.
+The whole palette MUST be reachable as one list in which a colour can be added and any colour removed, without opening a row. This is where the number of colours is set (§9.2.3): adding lengthens the list, removing shortens it, and `scanCount` follows in both directions.
+
+Adding a colour to the palette MUST add one. It MUST NOT overwrite or consume an entry already in the list — neither a colour the user picked earlier nor an automatic entry, whose colour is as much a part of the result as any other. Removal is how the palette gets shorter, and it MUST be refused for the last remaining entry, which §10.4 requires to exist.
+
+A colour MUST enter the palette by being sampled from the source bitmap (§9.3). The interface MUST NOT offer a way to add a colour the picture does not contain: an entry with no pixels to claim contributes no geometry, and offering it invites a palette that cannot produce the result it depicts. Changing an entry already in the palette to a stated exact value MUST remain possible, because a screen print or a cut file is sometimes specified by an ink or material reference rather than by what the picture happens to hold.
 
 ## 9.3 Picked-colour behaviour
 
