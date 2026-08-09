@@ -269,6 +269,28 @@ def _build_result_svg(session) -> str:
     )
 
 
+#: Endpoints answered without taking the session's pipeline lock. Everything
+#: else is serialised, which is the safe default: a new endpoint has to be added
+#: here deliberately, and the cost of forgetting is a wait rather than a race.
+#:
+#: The bar for membership is that the response shares no mutable session state
+#: at all. The two preset listings are built from static preset data, and
+#: `/api/cancel` answers a constant after raising a flag — and is precisely the
+#: request that must not queue behind the slow trace the user is abandoning.
+#:
+#: `/api/session` is deliberately *not* here, tempting though it is: its
+#: response embeds `session.settings` by reference, and the caller serialises
+#: that dictionary after this function has returned. Answering it outside the
+#: lock would mean walking the settings tree while a destination change or an
+#: export writes into it. It is fetched once when the page loads, so it has
+#: nothing to gain and a torn response to lose.
+_WITHOUT_PIPELINE_LOCK = frozenset({
+    "/api/destination_presets",
+    "/api/trace_profiles",
+    "/api/cancel",
+})
+
+
 #: Endpoints that operate on a bitmap. Requesting one before an image has been
 #: loaded is a client bug rather than a user error, so it gets a plain 400
 #: instead of being folded into each handler.
@@ -299,6 +321,20 @@ def handle_api_request(session, path: str, method: str, body: dict, headers: dic
     if path in _REQUIRES_IMAGE and not session.has_image:
         return (400, {"error": "Load an image first."})
 
+    if path in _WITHOUT_PIPELINE_LOCK:
+        return _dispatch(session, path, method, body, headers)
+
+    # The server answers requests concurrently, but the session is one mutable
+    # document: two traces running at once would interleave their writes to its
+    # settings, palette and cached output, and the result would depend on which
+    # finished first. Serialising them here is what makes the concurrency above
+    # a responsiveness change rather than a behaviour change.
+    with session.pipeline_lock:
+        return _dispatch(session, path, method, body, headers)
+
+
+def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tuple[int, dict]:
+    """The endpoint table itself; see `handle_api_request` for the gates."""
     if path == "/api/session" and method == "GET":
         return (200, _session_state(session))
 

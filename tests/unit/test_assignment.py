@@ -98,6 +98,52 @@ class TestAssignNearest:
         centres = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
         assert (assign_nearest(oklab, np.ones((2, 2), dtype=bool), centres) == 0).all()
 
+    def test_a_later_exact_tie_does_not_displace_the_winner(self):
+        """
+        The sharp edge of §34.30 for a scan that compares one centre at a time:
+        an incumbent must be replaced only by something strictly closer. A
+        later centre at exactly the same distance would otherwise steal the
+        pixel, and the answer would depend on iteration order.
+        """
+        oklab = np.zeros((1, 1, 3))
+        centres = np.array([
+            [0.9, 0.0, 0.0],        # far
+            [0.2, 0.0, 0.0],        # nearest, and first to be nearest
+            [0.5, 0.0, 0.0],        # far
+            [-0.2, 0.0, 0.0],       # exactly as near as index 1
+        ])
+        assert assign_nearest(oklab, np.ones((1, 1), dtype=bool), centres)[0, 0] == 1
+
+    def test_it_agrees_with_the_brute_force_distance_table(self):
+        """
+        The reference the scan replaced: build the whole (n, k) table and take
+        `argmin`. That is unaffordable at four megapixels — it is the 480 MB of
+        temporaries this function exists to avoid — but at 40x30 it is the
+        clearest possible statement of what the answer should be.
+        """
+        rng = np.random.default_rng(7)
+        oklab = rng.uniform(-0.4, 1.0, size=(40, 30, 3)).astype(np.float32)
+        centres = rng.uniform(-0.4, 1.0, size=(11, 3))
+        mask = rng.random((40, 30)) > 0.25
+
+        pixels = oklab[mask]
+        distances = ((pixels[:, None, :] - centres[None, :, :]) ** 2).sum(axis=2)
+        expected = np.full((40, 30), -1, dtype=np.int32)
+        expected[mask] = np.argmin(distances, axis=1)
+
+        assert np.array_equal(assign_nearest(oklab, mask, centres), expected)
+
+    def test_it_handles_the_largest_supported_scan_count(self):
+        """§13: at most 64 scans, so the per-centre scan must stay correct there."""
+        rng = np.random.default_rng(11)
+        oklab = rng.uniform(0.0, 1.0, size=(8, 8, 3)).astype(np.float32)
+        centres = rng.uniform(0.0, 1.0, size=(64, 3))
+
+        result = assign_nearest(oklab, np.ones((8, 8), dtype=bool), centres)
+        pixels = oklab.reshape(-1, 3)
+        distances = ((pixels[:, None, :] - centres[None, :, :]) ** 2).sum(axis=2)
+        assert np.array_equal(result.reshape(-1), np.argmin(distances, axis=1))
+
 
 class TestDistribute:
     def test_unclaimed_pixels_spread_across_automatic_entries(self):

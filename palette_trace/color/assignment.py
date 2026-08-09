@@ -65,9 +65,43 @@ def assign_nearest(
         return assignment
 
     pixels = oklab_image[mask]                       # (n, 3)
-    # (n, k) squared distances; k is the scan count, at most 64.
-    distances = ((pixels[:, None, :] - centres[None, :, :]) ** 2).sum(axis=2)
-    assignment[mask] = np.argmin(distances, axis=1).astype(np.int32)
+
+    # One centre at a time, keeping a running best. Materialising the whole
+    # (n, k) — or worse, (n, k, 3) — distance table first is the same O(n·k)
+    # arithmetic through several hundred megabytes of temporaries: at four
+    # megapixels and five scans that is 480 MB of differences reduced to a
+    # 160 MB table, and the cost is the memory traffic, not the maths. This
+    # keeps a fixed handful of length-n arrays instead, whatever k is.
+    centres = centres.astype(np.float32, copy=False)
+    pixels = pixels.astype(np.float32, copy=False)
+
+    winner = np.zeros(pixels.shape[0], dtype=np.int32)
+    best = np.empty(pixels.shape[0], dtype=np.float32)
+    term = np.empty(pixels.shape[0], dtype=np.float32)
+    distance = np.empty(pixels.shape[0], dtype=np.float32)
+
+    for index in range(centres.shape[0]):
+        # Squared distance: the square root is monotonic, so it cannot change
+        # which centre is nearest, and it is not free on n pixels.
+        np.subtract(pixels[:, 0], centres[index, 0], out=distance)
+        np.multiply(distance, distance, out=distance)
+        for axis in (1, 2):
+            np.subtract(pixels[:, axis], centres[index, axis], out=term)
+            np.multiply(term, term, out=term)
+            np.add(distance, term, out=distance)
+
+        if index == 0:
+            best[:] = distance
+            continue
+
+        # Strictly closer, never merely equal: a tie leaves the incumbent in
+        # place, so the lowest index still wins and the result depends only on
+        # palette order (§34.30) — the same rule `argmin` applied.
+        closer = distance < best
+        np.copyto(best, distance, where=closer)
+        np.copyto(winner, index, where=closer)
+
+    assignment[mask] = winner
     return assignment
 
 

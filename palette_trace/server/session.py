@@ -3,6 +3,7 @@ Session token and active document state manager.
 """
 
 import secrets
+import threading
 from typing import Optional
 
 #: How the session's current bitmap arrived. A host that was given a path on
@@ -33,8 +34,18 @@ class AppSession:
         self.settings = None
         self.controller = None
         self.pipeline_output = None
-        self.is_applied = False
-        self.is_cancelled = False
+        self._is_applied = False
+        self._is_cancelled = False
+        #: Set the moment the session reaches either terminal state. The server
+        #: serves requests on worker threads, so it needs something to wait on
+        #: rather than a flag to re-read between requests; the two flags stay
+        #: plain assignments for every caller that only writes them.
+        self.finished = threading.Event()
+        #: Held for the duration of any request that runs the pipeline or
+        #: replaces the bitmap. Concurrency exists so that a slow trace stops
+        #: blocking the whole server, not so that two traces can interleave
+        #: their writes to this session (§34.30 would not survive that).
+        self.pipeline_lock = threading.RLock()
         #: True when a recorded source fingerprint no longer matches (§27).
         #: The interface must offer the recovery choices before applying.
         self.source_changed = False
@@ -48,6 +59,26 @@ class AppSession:
         self.output_path = None
         #: Set when an oversized upload was resized to stay traceable (§9.4.2).
         self.resize_notice = None
+
+    @property
+    def is_applied(self) -> bool:
+        return self._is_applied
+
+    @is_applied.setter
+    def is_applied(self, value: bool) -> None:
+        self._is_applied = bool(value)
+        if self._is_applied:
+            self.finished.set()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._is_cancelled
+
+    @is_cancelled.setter
+    def is_cancelled(self, value: bool) -> None:
+        self._is_cancelled = bool(value)
+        if self._is_cancelled:
+            self.finished.set()
 
     @property
     def has_image(self) -> bool:
