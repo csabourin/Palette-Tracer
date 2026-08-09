@@ -48,22 +48,36 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
             return
 
         raw_body = self.rfile.read(length) if length > 0 else b"{}"
-        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-
-        if content_type and content_type != "application/json":
-            # A bitmap posted as its own bytes rather than wrapped in a JSON
-            # data URI. Handed straight to the endpoint, which decides whether
-            # it wanted one; nothing here tries to parse it.
-            body = {"rawBody": raw_body, "contentType": content_type}
-        else:
-            try:
-                body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
-            except Exception:
-                body = {}
+        body = self._parse_body(raw_body)
 
         headers = {k: v for k, v in self.headers.items()}
         status, res = handle_api_request(self.session, self.path.split("?")[0], "POST", body, headers)
         self._send_json(status, res)
+
+    def _parse_body(self, raw_body: bytes) -> dict:
+        """
+        Reads a request body as either JSON or a bitmap's own bytes.
+
+        `Content-Type` decides when it says something useful, and the body
+        itself decides when it does not: a body that will not parse as JSON was
+        never going to be JSON, whatever a header claimed on its behalf. That
+        matters because the header is the one part of this request that
+        something in the middle — a reverse proxy, a rewritten fetch — can
+        quietly change, and losing it should not turn a picture into an error
+        message about data URIs.
+        """
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        binary = {"rawBody": raw_body, "contentType": content_type}
+
+        if content_type and content_type != "application/json":
+            return binary
+
+        try:
+            parsed = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        except (UnicodeDecodeError, ValueError):
+            return binary
+
+        return parsed if isinstance(parsed, dict) else binary
 
     def _send_json(self, status: int, data: dict):
         body_bytes = json.dumps(data).encode("utf-8")
@@ -86,6 +100,7 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
                 # reached, so this does not widen what §9.1 protects.
                 self.send_response(302)
                 self.send_header("Location", f"/index.html?token={self.session.session_token}")
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 return
             target_path = WEB_DIR / "index.html"
@@ -110,6 +125,11 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
+        # The interface and the server it talks to are one program, released
+        # together and served from a port that gets reused. A cached app.js
+        # against a freshly started server is two different versions of that
+        # program negotiating an API neither of them agrees on.
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(content)
 
