@@ -156,13 +156,23 @@ def launch_palette_trace_app(
 
     server = HTTPServer((host, port), PaletteTraceRequestHandler)
     bound_port = server.server_port
-    display_host = host if host not in ("0.0.0.0", "::") else "127.0.0.1"
-    url = f"http://{display_host}:{bound_port}/index.html?token={session.session_token}"
+    path = f"/index.html?token={session.session_token}"
 
     if open_browser:
-        webbrowser.open(url)
+        webbrowser.open(f"http://127.0.0.1:{bound_port}{path}")
+    elif host in ("0.0.0.0", "::"):
+        # Bound to every interface, which is what a container platform needs.
+        # This used to print a 127.0.0.1 URL regardless, which says the opposite
+        # of what the socket is doing: it reads as "loopback only, not reachable
+        # from outside" at the exact moment the operator is trying to find out
+        # whether their host is publishing it.
+        print(f"Palette Trace is listening on every interface, port {bound_port}.")
+        print("Open the address your host publishes for that port. No token is")
+        print("needed in the address: a request without one is redirected to an")
+        print("authenticated page.")
+        print(f"On this machine that is http://127.0.0.1:{bound_port}{path}")
     else:
-        print(f"Palette Trace interface: {url}")
+        print(f"Palette Trace interface: http://{host}:{bound_port}{path}")
 
     # Event loop until Apply or Cancel
     try:
