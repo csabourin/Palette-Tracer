@@ -10,13 +10,16 @@ server, not of `handle_api_request`.
 import http.client
 import json
 import threading
+import time
 
 import pytest
-from http.server import HTTPServer
+from http.server import ThreadingHTTPServer
 
+from palette_trace.server import api
 from palette_trace.server.app_server import (
     MAX_REQUEST_BYTES,
     PaletteTraceRequestHandler,
+    launch_palette_trace_app,
 )
 from palette_trace.server.session import AppSession
 from palette_trace.settings import create_default_settings
@@ -28,7 +31,7 @@ def server():
     session.settings = create_default_settings("test-uuid")
 
     PaletteTraceRequestHandler.session = session
-    httpd = HTTPServer(("127.0.0.1", 0), PaletteTraceRequestHandler)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), PaletteTraceRequestHandler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
@@ -41,6 +44,19 @@ def server():
 
 def connect(httpd):
     return http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
+
+
+def tiny_source():
+    """A real decoded source, for the endpoints that refuse to run without one."""
+    import numpy as np
+    from PIL import Image
+
+    from palette_trace.image_source import DecodedImageSource
+
+    pixels = np.zeros((6, 8, 4), dtype=np.uint8)
+    pixels[..., :3] = (200, 40, 60)
+    pixels[..., 3] = 255
+    return DecodedImageSource(Image.fromarray(pixels, mode="RGBA"), "image/png")
 
 
 class TestPayloadLimit:
@@ -175,6 +191,218 @@ class TestRawBodies:
         # having understood the request as JSON at all.
         assert conn.getresponse().status == 400
         conn.close()
+
+
+class TestConcurrency:
+    """
+    §9.1 does not ask for a concurrent server, but a single-request one is what
+    put the 404s in front of users: a trace holds the loop for seconds, nothing
+    else is accepted, and the reverse proxy in front of the server answers the
+    browser with its own error page instead. These pin the two halves of the
+    fix — that slow work no longer blocks the socket, and that it is still
+    serialised against itself.
+    """
+
+    @pytest.fixture
+    def slow_pipeline(self, server, monkeypatch):
+        """Replaces the pipeline with something slow and observable."""
+        httpd, session = server
+        session.image_source = tiny_source()
+        spans = []
+        lock = threading.Lock()
+
+        def _slow(_session):
+            started = time.perf_counter()
+            time.sleep(0.5)
+            with lock:
+                spans.append((started, time.perf_counter()))
+            return {"palette_entries": [], "claims_stats": {},
+                    "scan_results": [], "warnings": []}
+
+        monkeypatch.setattr(api, "_run_pipeline", _slow)
+        return httpd, session, spans
+
+    def trace(self, httpd, session, results=None, key=None):
+        conn = connect(httpd)
+        conn.request(
+            "POST", "/api/update_settings",
+            body=json.dumps({"settings": session.settings}),
+            headers={"Content-Type": "application/json",
+                     "X-Session-Token": session.session_token},
+        )
+        status = conn.getresponse()
+        status.read()
+        if results is not None:
+            results[key] = status.status
+        conn.close()
+
+    @pytest.mark.parametrize("path", ["/app.js", "/styles.css"])
+    def test_a_running_trace_no_longer_blocks_the_server(self, slow_pipeline, path):
+        """
+        The interface's own assets, which is what the proxy in front of the
+        server was failing to get. They never touch session state, so they do
+        not even reach the lock — the only thing that used to stop them was the
+        server accepting one request at a time.
+        """
+        httpd, session, _ = slow_pipeline
+        tracing = threading.Thread(target=self.trace, args=(httpd, session))
+        tracing.start()
+        time.sleep(0.1)                          # let the trace take the lock
+
+        started = time.perf_counter()
+        conn = connect(httpd)
+        conn.request("GET", path)
+        response = conn.getresponse()
+        elapsed = time.perf_counter() - started
+        assert response.status == 200
+        response.read()
+        conn.close()
+        tracing.join(timeout=10)
+
+        # The trace still has ~0.4s to run. Answering inside that window is the
+        # whole point; the old server could not answer at all until it finished.
+        assert elapsed < 0.3, f"{path} waited {elapsed:.2f}s behind a trace"
+
+    def test_a_settings_read_waits_rather_than_tearing(self, slow_pipeline):
+        """
+        The other half of the trade. `/api/session` hands back the live settings
+        dictionary and the caller serialises it later, so it is answered under
+        the lock even though that means waiting out a trace. It is fetched once
+        at page load; a torn reply would cost far more than the wait.
+        """
+        httpd, session, _ = slow_pipeline
+        tracing = threading.Thread(target=self.trace, args=(httpd, session))
+        tracing.start()
+        time.sleep(0.1)
+
+        started = time.perf_counter()
+        conn = connect(httpd)
+        conn.request("GET", "/api/session",
+                     headers={"X-Session-Token": session.session_token})
+        response = conn.getresponse()
+        elapsed = time.perf_counter() - started
+        assert response.status == 200
+        json.loads(response.read())
+        conn.close()
+        tracing.join(timeout=10)
+
+        assert elapsed >= 0.3, "/api/session answered while a trace held the lock"
+
+    def test_cancel_does_not_queue_behind_the_trace_it_cancels(self, slow_pipeline):
+        """The one request a user sends *because* the trace is slow."""
+        httpd, session, _ = slow_pipeline
+        tracing = threading.Thread(target=self.trace, args=(httpd, session))
+        tracing.start()
+        time.sleep(0.1)
+
+        started = time.perf_counter()
+        conn = connect(httpd)
+        conn.request("POST", "/api/cancel", body="{}",
+                     headers={"Content-Type": "application/json",
+                              "X-Session-Token": session.session_token})
+        assert conn.getresponse().status == 200
+        elapsed = time.perf_counter() - started
+        conn.close()
+        tracing.join(timeout=10)
+
+        assert session.is_cancelled
+        assert elapsed < 0.3, f"/api/cancel waited {elapsed:.2f}s"
+
+    def test_two_traces_never_run_at_once(self, slow_pipeline):
+        """
+        Concurrency must not reach the session document. Two pipeline runs
+        interleaving their writes to one settings dict would make the result
+        depend on which finished first, which §34.30 does not survive.
+        """
+        httpd, session, spans = slow_pipeline
+        results = {}
+        threads = [
+            threading.Thread(target=self.trace, args=(httpd, session, results, key))
+            for key in ("first", "second")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert results == {"first": 200, "second": 200}
+        assert len(spans) == 2
+        first, second = sorted(spans)
+        assert first[1] <= second[0], "two traces overlapped"
+
+
+class TestShutdown:
+    """
+    The serving loop ends when the session does. The loop it replaces called
+    `handle_request` in a `while not applied` check, so it noticed Apply only
+    when some *later* request happened to arrive — on a quiet page, never.
+    """
+
+    def free_port(self) -> int:
+        import socket
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            return probe.getsockname()[1]
+
+    def test_applying_stops_the_server_and_still_answers(self):
+        session = AppSession()
+        session.settings = create_default_settings("test-uuid")
+        session.image_source = tiny_source()
+        port = self.free_port()
+        applied = []
+
+        hosting = threading.Thread(
+            target=lambda: applied.append(
+                launch_palette_trace_app(session, open_browser=False, port=port)
+            ),
+            daemon=True,
+        )
+        hosting.start()
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request("POST", "/api/apply", body="{}",
+                             headers={"Content-Type": "application/json",
+                                      "X-Session-Token": session.session_token})
+                response = conn.getresponse()
+                break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            pytest.fail("the server never came up")
+
+        # The request that ends the session must still receive its reply: the
+        # interface reads this response to know the trace was committed.
+        assert response.status == 200
+        assert json.loads(response.read())["status"] == "applied"
+        conn.close()
+
+        hosting.join(timeout=5)
+        assert not hosting.is_alive(), "the server outlived the session"
+        assert applied == [True]
+
+    def test_cancelling_stops_the_server_and_reports_it(self):
+        session = AppSession()
+        session.settings = create_default_settings("test-uuid")
+        port = self.free_port()
+        outcome = []
+
+        hosting = threading.Thread(
+            target=lambda: outcome.append(
+                launch_palette_trace_app(session, open_browser=False, port=port)
+            ),
+            daemon=True,
+        )
+        hosting.start()
+        time.sleep(0.2)
+
+        session.is_cancelled = True
+        hosting.join(timeout=5)
+        assert not hosting.is_alive()
+        assert outcome == [False]
 
 
 class TestTokenGate:

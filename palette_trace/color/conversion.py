@@ -100,14 +100,32 @@ def srgb_array_to_oklch(srgb: "np.ndarray") -> "np.ndarray":
     per-pixel Python loop it replaces was O(width x height) interpreter calls and
     dominated decode time on anything larger than a thumbnail.
 
+    The working precision follows the input rather than forcing float64. A
+    decoded bitmap arrives as float32 and is stored as float32, so widening it
+    here meant every pixel of a four-megapixel photograph made the whole trip
+    through double precision on its way to a single-precision array — twice the
+    memory traffic for digits the caller then throws away. Small float64 inputs,
+    such as the histogram's per-bin arrays, keep their precision.
+
     NumPy is required here. Correctness must not depend solely on NumPy (§5), so
     callers that cannot import it should fall back to the scalar functions.
     """
     import numpy as np
 
-    values = np.asarray(srgb, dtype=np.float64)
-    linear = np.where(values <= 0.04045, values / 12.92,
-                      np.power((values + 0.055) / 1.055, 2.4))
+    values = np.asarray(srgb)
+    if values.dtype != np.float32:
+        values = values.astype(np.float64, copy=False)
+
+    # sRGB's transfer function is piecewise, and the fractional power is by far
+    # the most expensive operation in this function — so it is evaluated only on
+    # the pixels that keep its answer. `linear` already holds the cheap branch
+    # for every pixel, which is what makes the gated `np.power` safe: the lanes
+    # it skips were written, not left uninitialised. It also stops the power
+    # being handed a negative base, which an out-of-range input would produce.
+    above_knee = values > 0.04045
+    linear = values / 12.92
+    scaled = (values + 0.055) / 1.055
+    np.power(scaled, 2.4, out=linear, where=above_knee)
 
     lr, lg, lb = linear[..., 0], linear[..., 1], linear[..., 2]
 

@@ -48,9 +48,13 @@ class DecodedImageSource:
         needs it: decoding a bitmap so it can be put on screen should not wait
         on a colour-space conversion of every pixel that nothing has asked for
         yet.
+
+        `self.srgb` is float32, and the conversion now works in the precision it
+        is handed, so the result already has the stored dtype — the cast that
+        used to sit here was undoing a widening that no longer happens.
         """
         if self._oklch is None:
-            self._oklch = srgb_array_to_oklch(self.srgb).astype(np.float32)
+            self._oklch = srgb_array_to_oklch(self.srgb)
         return self._oklch
 
 

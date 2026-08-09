@@ -5,8 +5,9 @@ Serves static frontend assets and API endpoints.
 
 import os
 import json
+import threading
 import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from palette_trace.server.api import handle_api_request
 
@@ -154,7 +155,14 @@ def launch_palette_trace_app(
     """
     PaletteTraceRequestHandler.session = session
 
-    server = HTTPServer((host, port), PaletteTraceRequestHandler)
+    # Threaded, because a trace takes seconds and a single-request loop spends
+    # every one of them refusing to accept a connection. Nothing else was
+    # listening, so a reverse proxy in front of the server — Replit's, for one —
+    # would give up waiting and answer the browser with its own error page,
+    # which the interface then had to report as a reply that did not come from
+    # Palette Trace at all. `api.handle_api_request` serialises the work that
+    # touches session state, so concurrency here buys responsiveness, not races.
+    server = ThreadingHTTPServer((host, port), PaletteTraceRequestHandler)
     bound_port = server.server_port
     path = f"/index.html?token={session.session_token}"
 
@@ -174,11 +182,22 @@ def launch_palette_trace_app(
     else:
         print(f"Palette Trace interface: http://{host}:{bound_port}{path}")
 
-    # Event loop until Apply or Cancel
+    # Serve until Apply or Cancel. The loop runs on its own thread and this one
+    # waits for the session to reach a terminal state, rather than checking the
+    # flags between requests: `handle_request` blocks until a request arrives,
+    # so the old loop only noticed Apply once some *later* request happened to
+    # come in. `shutdown` stops the accept loop without touching the requests
+    # already being served, and `server_close` joins them, so nothing is cut off
+    # mid-response — including the very response that reported Apply.
+    serving = threading.Thread(target=server.serve_forever, name="palette-trace-http")
+    serving.start()
     try:
-        while not session.is_applied and not session.is_cancelled:
-            server.handle_request()
+        session.finished.wait()
+    except KeyboardInterrupt:
+        session.is_cancelled = True
     finally:
+        server.shutdown()
+        serving.join()
         server.server_close()
 
     return session.is_applied
