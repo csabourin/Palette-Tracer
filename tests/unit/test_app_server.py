@@ -87,7 +87,7 @@ class TestPayloadLimit:
         # Rejected by the decoder, not by the size guard — the request itself
         # was accepted and dispatched.
         assert response.status == 400
-        assert "data URI" in json.loads(response.read())["error"]
+        assert "No picture arrived" in json.loads(response.read())["error"]
         conn.close()
 
 
@@ -126,6 +126,42 @@ class TestRawBodies:
         assert (body["imageWidth"], body["imageHeight"]) == (20, 12)
         assert body["imageName"] == "photo.png"
         conn.close()
+
+    def test_an_image_body_with_no_content_type_still_arrives(self, server):
+        """
+        The header is the one part of this request something in the middle can
+        rewrite. A body that will not parse as JSON was never JSON.
+        """
+        httpd, session = server
+        raw = self.png()
+        conn = connect(httpd)
+        conn.putrequest("POST", "/api/load_image")
+        conn.putheader("X-Session-Token", session.session_token)
+        conn.putheader("X-Defer-Trace", "1")
+        conn.putheader("Content-Length", str(len(raw)))
+        conn.endheaders()
+        conn.send(raw)
+
+        response = conn.getresponse()
+        body = json.loads(response.read())
+
+        assert response.status == 200
+        assert (body["imageWidth"], body["imageHeight"]) == (20, 12)
+        conn.close()
+
+    def test_the_interface_is_never_served_from_cache(self, server):
+        """
+        A cached app.js against a freshly started server is two versions of one
+        program negotiating an API neither of them agrees on.
+        """
+        httpd, session = server
+        for path in (f"/index.html?token={session.session_token}", "/app.js", "/styles.css"):
+            conn = connect(httpd)
+            conn.request("GET", path)
+            response = conn.getresponse()
+            assert response.getheader("Cache-Control") == "no-store", path
+            response.read()
+            conn.close()
 
     def test_a_json_body_is_still_parsed_as_json(self, server):
         httpd, session = server

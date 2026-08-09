@@ -444,6 +444,44 @@ async function api(path, { method = "GET", body, quiet = false } = {}) {
  * loading a picture whose length is genuinely known — so this stays on
  * XMLHttpRequest, which can.
  */
+/**
+ * Sends the chosen bitmap, by whichever route the server on the end understands.
+ *
+ * Raw bytes are the fast route. It depends on a `Content-Type` reaching the
+ * other end intact, which is out of this page's hands — a reverse proxy sits in
+ * front of some deployments, and a server from a different release may not read
+ * a raw body at all. So a refusal falls back to the base64 `data:` URI form,
+ * which is slower and always understood, rather than being reported as a
+ * mysterious complaint about data URIs.
+ */
+async function sendImage(blob, meta, onProgress) {
+  try {
+    return await uploadImage(blob, meta, onProgress);
+  } catch (error) {
+    if (!error.recoverable) throw error;
+  }
+
+  loading.set(0.35, "Sending it the long way round…");
+  return api("/api/load_image", {
+    method: "POST",
+    body: {
+      dataUri: await readFileAsDataUri(blob),
+      fileName: meta.fileName,
+      deferTrace: meta.deferTrace,
+      clientBitmap: meta.width ? { width: meta.width, height: meta.height } : undefined,
+    },
+  });
+}
+
+function readFileAsDataUri(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("That file could not be read."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function uploadImage(blob, { fileName, width, height, deferTrace }, onProgress) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -467,8 +505,18 @@ function uploadImage(blob, { fileName, width, height, deferTrace }, onProgress) 
       } catch {
         data = {};
       }
-      if (request.status >= 200 && request.status < 300) resolve(data);
-      else reject(new Error(data.error || `That picture could not be loaded (${request.status}).`));
+      if (request.status >= 200 && request.status < 300) {
+        resolve(data);
+        return;
+      }
+      // A 4xx here means the server would not take the bytes. That may be
+      // because the picture is genuinely unusable, or because this route never
+      // reached it intact — the caller tries the other route before deciding.
+      const failure = new Error(
+        data.error || `That picture could not be loaded (${request.status}).`
+      );
+      failure.recoverable = request.status >= 400 && request.status < 500;
+      reject(failure);
     });
     request.addEventListener("error", () => reject(new Error("The picture could not be sent.")));
     request.addEventListener("abort", () => reject(new Error("Loading was cancelled.")));
@@ -718,7 +766,7 @@ async function handleChosenFile(file) {
     const prepared = await prepareUpload(file);
     loading.set(0.3, "Sending it over…");
 
-    const data = await uploadImage(
+    const data = await sendImage(
       prepared.blob,
       {
         fileName: file.name,

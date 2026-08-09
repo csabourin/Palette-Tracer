@@ -218,13 +218,29 @@ class TestRawUpload:
         status, body = self.post_raw(empty_session, b"not a picture")
         assert status == 400
 
-    def test_a_type_that_cannot_be_traced_is_refused(self, empty_session):
+    @pytest.mark.parametrize("declared", ["", "application/octet-stream", "application/pdf"])
+    def test_the_bytes_decide_when_the_declared_type_is_no_help(self, empty_session, declared):
+        """
+        A proxy can rewrite a Content-Type and a file picker can omit one, but
+        a PNG still begins with a PNG's bytes.
+        """
         headers = {"X-Session-Token": empty_session.session_token}
         status, body = handle_api_request(
             empty_session, "/api/load_image", "POST",
-            {"rawBody": self.png_bytes(), "contentType": "application/pdf"}, headers,
+            {"rawBody": self.png_bytes(), "contentType": declared}, headers,
+        )
+
+        assert status == 200
+        assert (body["imageWidth"], body["imageHeight"]) == (30, 18)
+
+    def test_something_that_is_not_an_image_is_still_refused(self, empty_session):
+        headers = {"X-Session-Token": empty_session.session_token}
+        status, body = handle_api_request(
+            empty_session, "/api/load_image", "POST",
+            {"rawBody": b"%PDF-1.4 not a picture", "contentType": "application/pdf"}, headers,
         )
         assert status == 400
+        assert "application/pdf" in body["error"]
 
     def test_a_client_holding_the_same_pixels_is_not_sent_them_back(self, empty_session):
         status, body = self.post_raw(
