@@ -85,7 +85,10 @@ fault, so `.replit` was:
 * the two entry points did different things: the script traced the bundled
   sample into `/tmp`, the workflow started with no image.
 
-Now: one port (`8000 → 80`), one entry point (`scripts/replit_run.sh`, which
+Now: one port (`8000 → 8000` — external 80 was tried and was wrong, because
+Replit's console and webview address this Repl by `:8000`; what matters is that
+there is exactly one mapping, not which number it carries), one entry point
+(`scripts/replit_run.sh`, which
 installs first), and the script starts **without an image** so the user brings
 their own picture, which is the only thing that makes sense on a hosted webview.
 
