@@ -48,10 +48,18 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
             return
 
         raw_body = self.rfile.read(length) if length > 0 else b"{}"
-        try:
-            body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
-        except Exception:
-            body = {}
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+
+        if content_type and content_type != "application/json":
+            # A bitmap posted as its own bytes rather than wrapped in a JSON
+            # data URI. Handed straight to the endpoint, which decides whether
+            # it wanted one; nothing here tries to parse it.
+            body = {"rawBody": raw_body, "contentType": content_type}
+        else:
+            try:
+                body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+            except Exception:
+                body = {}
 
         headers = {k: v for k, v in self.headers.items()}
         status, res = handle_api_request(self.session, self.path.split("?")[0], "POST", body, headers)

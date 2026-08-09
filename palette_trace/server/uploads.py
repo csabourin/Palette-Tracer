@@ -90,7 +90,7 @@ def parse_data_uri(data_uri: str) -> tuple[str, bytes]:
 
 def decode_upload(data_uri: str) -> tuple[DecodedImageSource, str | None]:
     """
-    Decodes a browser-supplied bitmap.
+    Decodes a browser-supplied bitmap sent as a base64 `data:` URI.
 
     Returns the decoded source and, when the image had to be resized to stay
     traceable, a human-readable notice describing what happened. The caller is
@@ -98,6 +98,26 @@ def decode_upload(data_uri: str) -> tuple[DecodedImageSource, str | None]:
     the user handed over would be a lie about the output's resolution.
     """
     mime_type, raw = parse_data_uri(data_uri)
+    return decode_bytes(raw, mime_type)
+
+
+def decode_bytes(raw: bytes, mime_type: str) -> tuple[DecodedImageSource, str | None]:
+    """
+    Decodes a browser-supplied bitmap sent as raw bytes.
+
+    The `data:` URI form costs a third again in transfer and a full base64 pass
+    on both ends, which on a phone photograph is most of the wait before the
+    picture appears. Posting the file's own bytes skips all of it; this is the
+    same decode, without the envelope.
+    """
+    mime_type = (mime_type or "").split(";")[0].strip().lower()
+    if mime_type not in ACCEPTED_MIME_TYPES:
+        raise ImageSourceError(
+            f"{mime_type or 'That file type'} is not an image format Palette Trace can trace."
+        )
+
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise ImageSourceError("That image is larger than the 32 MB upload limit.")
 
     try:
         image = Image.open(io.BytesIO(raw))

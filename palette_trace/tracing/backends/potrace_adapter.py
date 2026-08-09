@@ -11,14 +11,53 @@ from palette_trace.tracing.protocol import (
 )
 from palette_trace.tracing.normalization import normalize_svg_path_data
 
+
+def _fast_findnext(bitmap: np.ndarray):
+    """
+    Bottom-most, then left-most set pixel of `bitmap`, or None.
+
+    Identical in result to `potrace.potrace.findnext`, which the pure-Python
+    potracer calls once per path it discovers and answers with a full
+    `np.nonzero` of the whole bitmap — quadratic in the number of paths, and on
+    a noisy photograph the single most expensive thing in a trace. Collapsing
+    rows first turns each call into two linear scans of much smaller arrays.
+    """
+    rows = bitmap.any(axis=1)
+    if not rows.any():
+        return None
+    y = int(np.flatnonzero(rows)[-1])
+    return y, int(np.argmax(bitmap[y]))
+
+
+def _install_fast_findnext() -> None:
+    """
+    Swaps potracer's path search for the equivalent above.
+
+    Guarded on the symbol still existing and still being the one we mean to
+    replace, so a future potracer that has fixed this itself is left alone.
+    """
+    try:
+        from potrace import potrace as potrace_impl
+    except ImportError:
+        return
+
+    existing = getattr(potrace_impl, "findnext", None)
+    if existing is None or getattr(existing, "_palette_trace_patched", False):
+        return
+
+    _fast_findnext._palette_trace_patched = True
+    potrace_impl.findnext = _fast_findnext
+
+
 class PotraceAdapter(TraceBackend):
     """Adapter for Potrace vectorization engine."""
 
     def __init__(self):
         self._has_module = False
         try:
-            import potrace
+            import potrace  # noqa: F401
             self._has_module = True
+            _install_fast_findnext()
         except ImportError:
             pass
 

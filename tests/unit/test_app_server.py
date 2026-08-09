@@ -91,6 +91,56 @@ class TestPayloadLimit:
         conn.close()
 
 
+class TestRawBodies:
+    """A bitmap may be posted as its own bytes rather than as JSON (§9.4.2)."""
+
+    def png(self):
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        pixels = np.zeros((12, 20, 4), dtype=np.uint8)
+        pixels[..., :3] = (10, 120, 200)
+        pixels[..., 3] = 255
+        buf = io.BytesIO()
+        Image.fromarray(pixels, mode="RGBA").save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_an_image_body_reaches_the_endpoint_undecoded(self, server):
+        httpd, session = server
+        conn = connect(httpd)
+        conn.request(
+            "POST", "/api/load_image", body=self.png(),
+            headers={
+                "Content-Type": "image/png",
+                "X-Session-Token": session.session_token,
+                "X-File-Name": "photo.png",
+                "X-Defer-Trace": "1",
+            },
+        )
+        response = conn.getresponse()
+        body = json.loads(response.read())
+
+        assert response.status == 200
+        assert (body["imageWidth"], body["imageHeight"]) == (20, 12)
+        assert body["imageName"] == "photo.png"
+        conn.close()
+
+    def test_a_json_body_is_still_parsed_as_json(self, server):
+        httpd, session = server
+        conn = connect(httpd)
+        conn.request(
+            "POST", "/api/update_settings",
+            body=json.dumps({"settings": session.settings}),
+            headers={"Content-Type": "application/json", "X-Session-Token": session.session_token},
+        )
+        # No image yet, so the endpoint says so — which it can only do after
+        # having understood the request as JSON at all.
+        assert conn.getresponse().status == 400
+        conn.close()
+
+
 class TestTokenGate:
     def test_api_requests_without_a_token_are_refused(self, server):
         httpd, _ = server

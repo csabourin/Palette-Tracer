@@ -1,88 +1,86 @@
 """
 Connected component analysis, speckle removal, and hole filling.
+
+Every operation here runs once per scan on a full-resolution mask, so a
+per-pixel Python loop is not an implementation detail — it is the difference
+between an interface that answers and one that looks hung. The labelling is
+delegated to `scipy.ndimage`, which is already a hard dependency, and the
+per-component decisions are made with `np.bincount` rather than by walking the
+label array again.
 """
 
-from collections import deque
 import numpy as np
+from scipy import ndimage
+
+#: 4-connectivity, matching the flood fill this module used to implement by
+#: hand. A diagonal touch is not connectivity (see tests/unit/test_masks.py).
+_FOUR_CONNECTED = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
+
 
 def label_connected_components(binary_mask: np.ndarray) -> tuple[np.ndarray, list[int]]:
     """
     4-connected component labeling on a boolean 2D mask.
     Returns (labels_array, list_of_component_sizes).
+
+    `sizes[0]` is 0 and stands for the background, so `sizes[label]` is the
+    area of that label — the indexing every caller here relies on.
     """
-    height, width = binary_mask.shape
-    labels = np.zeros((height, width), dtype=np.int32)
-    current_label = 0
-    sizes = [0]  # index 0 represents background (0 size)
+    mask = np.asarray(binary_mask, dtype=bool)
+    if mask.size == 0:
+        return np.zeros(mask.shape, dtype=np.int32), [0]
 
-    for y in range(height):
-        for x in range(width):
-            if binary_mask[y, x] and labels[y, x] == 0:
-                current_label += 1
-                count = 0
-                queue = deque([(y, x)])
-                labels[y, x] = current_label
+    labels, count = ndimage.label(mask, structure=_FOUR_CONNECTED)
+    labels = labels.astype(np.int32, copy=False)
 
-                while queue:
-                    cy, cx = queue.popleft()
-                    count += 1
-                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                        ny, nx = cy + dy, cx + dx
-                        if 0 <= ny < height and 0 <= nx < width:
-                            if binary_mask[ny, nx] and labels[ny, nx] == 0:
-                                labels[ny, nx] = current_label
-                                queue.append((ny, nx))
+    sizes = np.bincount(labels.ravel(), minlength=count + 1)
+    sizes[0] = 0
+    return labels, [int(size) for size in sizes]
 
-                sizes.append(count)
 
-    return labels, sizes
+def component_sizes(labels: np.ndarray, count: int) -> np.ndarray:
+    """Area of every label as an array, with index 0 zeroed (background)."""
+    sizes = np.bincount(labels.ravel(), minlength=count + 1)
+    sizes[0] = 0
+    return sizes
+
 
 def remove_small_speckles(binary_mask: np.ndarray, min_area_px2: float) -> np.ndarray:
     """Removes connected foreground components with area < min_area_px2."""
-    if min_area_px2 <= 1:
-        return binary_mask.copy()
+    mask = np.asarray(binary_mask, dtype=bool)
+    if min_area_px2 <= 1 or not mask.any():
+        return mask.copy()
 
-    labels, sizes = label_connected_components(binary_mask)
-    cleaned = binary_mask.copy()
+    labels, count = ndimage.label(mask, structure=_FOUR_CONNECTED)
+    sizes = component_sizes(labels, count)
 
-    for label_id, size in enumerate(sizes):
-        if label_id == 0:
-            continue
-        if size < min_area_px2:
-            cleaned[labels == label_id] = False
+    # A lookup table indexed by label turns "which components survive" into one
+    # vectorised gather instead of one boolean pass per component.
+    keep = sizes >= min_area_px2
+    keep[0] = False
+    return keep[labels]
 
-    return cleaned
 
 def fill_small_holes(binary_mask: np.ndarray, max_hole_area_px2: float) -> np.ndarray:
     """Fills background holes enclosed within foreground where hole area <= max_hole_area_px2."""
-    if max_hole_area_px2 <= 0:
-        return binary_mask.copy()
+    mask = np.asarray(binary_mask, dtype=bool)
+    if max_hole_area_px2 <= 0 or mask.size == 0:
+        return mask.copy()
 
-    inverted = ~binary_mask
-    labels, sizes = label_connected_components(inverted)
-    cleaned = binary_mask.copy()
+    inverted = ~mask
+    if not inverted.any():
+        return mask.copy()
 
-    height, width = binary_mask.shape
-    touching_edge = set()
+    labels, count = ndimage.label(inverted, structure=_FOUR_CONNECTED)
+    sizes = component_sizes(labels, count)
 
-    # Find background components touching boundary (exterior background)
-    for x in range(width):
-        if labels[0, x] > 0:
-            touching_edge.add(labels[0, x])
-        if labels[height - 1, x] > 0:
-            touching_edge.add(labels[height - 1, x])
+    # Anything reachable from the border is exterior, not a hole.
+    touching_edge = np.zeros(count + 1, dtype=bool)
+    for border in (labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1]):
+        touching_edge[np.unique(border)] = True
 
-    for y in range(height):
-        if labels[y, 0] > 0:
-            touching_edge.add(labels[y, 0])
-        if labels[y, width - 1] > 0:
-            touching_edge.add(labels[y, width - 1])
+    fill = (sizes <= max_hole_area_px2) & ~touching_edge
+    fill[0] = False
+    if not fill.any():
+        return mask.copy()
 
-    # Any inverted component not touching edge and size <= max_hole_area_px2 is a hole to fill
-    for label_id, size in enumerate(sizes):
-        if label_id == 0 or label_id in touching_edge:
-            continue
-        if size <= max_hole_area_px2:
-            cleaned[labels == label_id] = True
-
-    return cleaned
+    return mask | fill[labels]

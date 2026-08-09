@@ -3,7 +3,8 @@ Color histogram reduction module (6-bit channel quantizing for fast OKLab cluste
 """
 
 import numpy as np
-from palette_trace.color.conversion import srgb_to_oklab, oklab_to_srgb, srgb_to_hex
+from palette_trace.color.conversion import srgb_array_to_oklch, srgb_to_hex
+
 
 def build_color_histogram(
     srgb_image: np.ndarray,
@@ -15,52 +16,130 @@ def build_color_histogram(
     Returns list of dicts: [{'oklab': (L,a,b), 'srgb': (r,g,b), 'weight': count, 'packed_srgb': int}]
     """
     shift = 8 - bits_per_channel
-    divisor = 1 << shift
+    scale = (1 << bits_per_channel) - 1
 
-    # Mask valid unclaimed pixels
-    valid_coords = np.where(unclaimed_mask)
-    if len(valid_coords[0]) == 0:
+    mask = np.asarray(unclaimed_mask, dtype=bool)
+    if not mask.any():
         return []
 
-    r_vals = srgb_image[:, :, 0][valid_coords]
-    g_vals = srgb_image[:, :, 1][valid_coords]
-    b_vals = srgb_image[:, :, 2][valid_coords]
+    pixels = np.asarray(srgb_image)[mask]
+    channels = (pixels * 255.0).astype(np.uint32) >> shift
 
-    # Convert to integer 0..255
-    r_int = (r_vals * 255.0).astype(np.uint32)
-    g_int = (g_vals * 255.0).astype(np.uint32)
-    b_int = (b_vals * 255.0).astype(np.uint32)
-
-    # Packed 6-bit bins
-    r_bin = r_int >> shift
-    g_bin = g_int >> shift
-    b_bin = b_int >> shift
-
-    packed_bins = (r_bin << (2 * bits_per_channel)) | (g_bin << bits_per_channel) | b_bin
+    packed_bins = (
+        (channels[:, 0].astype(np.int64) << (2 * bits_per_channel))
+        | (channels[:, 1].astype(np.int64) << bits_per_channel)
+        | channels[:, 2].astype(np.int64)
+    )
 
     unique_bins, counts = np.unique(packed_bins, return_counts=True)
 
-    histogram = []
-    scale = (1 << bits_per_channel) - 1
+    bins = np.stack([
+        (unique_bins >> (2 * bits_per_channel)) & scale,
+        (unique_bins >> bits_per_channel) & scale,
+        unique_bins & scale,
+    ], axis=1) / float(scale)
 
-    for bin_code, count in zip(unique_bins, counts):
-        r_b = (bin_code >> (2 * bits_per_channel)) & scale
-        g_b = (bin_code >> bits_per_channel) & scale
-        b_b = bin_code & scale
+    # One vectorised conversion for the whole histogram: OKLab per bin used to
+    # be a Python call per bin, and a 6-bit histogram can hold 262 144 of them.
+    oklch = srgb_array_to_oklch(bins)
+    hue = np.radians(oklch[:, 2])
+    oklab = np.stack(
+        [oklch[:, 0], oklch[:, 1] * np.cos(hue), oklch[:, 1] * np.sin(hue)], axis=1
+    )
 
-        r_f = r_b / scale
-        g_f = g_b / scale
-        b_f = b_b / scale
+    packed_srgb = (
+        (bins[:, 0] * 255).astype(np.int64) << 16
+        | (bins[:, 1] * 255).astype(np.int64) << 8
+        | (bins[:, 2] * 255).astype(np.int64)
+    )
 
-        oklab = srgb_to_oklab(r_f, g_f, b_f)
-
-        packed_srgb = (int(r_f * 255) << 16) | (int(g_f * 255) << 8) | int(b_f * 255)
-
-        histogram.append({
-            "oklab": oklab,
-            "srgb": (r_f, g_f, b_f),
+    return [
+        {
+            "oklab": (float(lab[0]), float(lab[1]), float(lab[2])),
+            "srgb": (float(rgb[0]), float(rgb[1]), float(rgb[2])),
             "weight": int(count),
-            "packed_srgb": packed_srgb,
-        })
+            "packed_srgb": int(packed),
+        }
+        for lab, rgb, count, packed in zip(oklab, bins, counts, packed_srgb)
+    ]
 
-    return histogram
+
+def unique_source_colors(
+    srgb_image: np.ndarray,
+    mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Every colour that literally occurs under `mask`, at full 8-bit precision.
+
+    Returns (rgb255, counts, oklab). Unlike :func:`build_color_histogram` this
+    does not bin anything: these are the colours the picture actually contains,
+    which is what a palette entry has to end up holding (§34.5).
+    """
+    selected = np.asarray(mask, dtype=bool)
+    if not selected.any():
+        empty = np.empty((0, 3))
+        return empty.astype(np.uint8), np.empty(0, dtype=np.int64), empty
+
+    pixels = np.rint(np.asarray(srgb_image)[selected] * 255.0).astype(np.int64)
+    packed = (pixels[:, 0] << 16) | (pixels[:, 1] << 8) | pixels[:, 2]
+
+    unique_packed, counts = np.unique(packed, return_counts=True)
+    rgb255 = np.stack([
+        (unique_packed >> 16) & 0xFF,
+        (unique_packed >> 8) & 0xFF,
+        unique_packed & 0xFF,
+    ], axis=1).astype(np.uint8)
+
+    oklch = srgb_array_to_oklch(rgb255.astype(np.float64) / 255.0)
+    hue = np.radians(oklch[:, 2])
+    oklab = np.stack(
+        [oklch[:, 0], oklch[:, 1] * np.cos(hue), oklch[:, 1] * np.sin(hue)], axis=1
+    )
+
+    return rgb255, counts, oklab
+
+
+def snap_to_source_colors(
+    centres: list[tuple[float, float, float]],
+    rgb255: np.ndarray,
+    counts: np.ndarray,
+    oklab: np.ndarray,
+) -> list[str]:
+    """
+    Replaces each OKLab centroid with the nearest colour the picture contains.
+
+    A K-Means centroid is an average of a cluster, so it is very often a colour
+    that appears nowhere in the source — a muddy blend across an edge. Snapping
+    each centroid to its nearest real colour keeps the palette's arrangement
+    (the clusters are unchanged) while guaranteeing that every swatch is a
+    colour someone could point at in the picture.
+
+    Ties are broken towards the more common colour, then towards the lower
+    packed sRGB value, so the result depends only on the image (§34.30).
+    """
+    if not centres or oklab.shape[0] == 0:
+        return []
+
+    targets = np.asarray(centres, dtype=np.float64)
+    # (k, n) — k is the scan count, at most 64.
+    distances = ((targets[:, None, :] - oklab[None, :, :]) ** 2).sum(axis=2)
+
+    packed = (
+        rgb255[:, 0].astype(np.int64) << 16
+        | rgb255[:, 1].astype(np.int64) << 8
+        | rgb255[:, 2].astype(np.int64)
+    )
+
+    snapped = []
+    for row in distances:
+        closest = np.flatnonzero(row <= row.min() + 1e-12)
+        if closest.size > 1:
+            best = counts[closest]
+            closest = closest[best == best.max()]
+            closest = closest[np.argmin(packed[closest])]
+        else:
+            closest = closest[0]
+        r, g, b = rgb255[closest]
+        snapped.append(srgb_to_hex(r / 255.0, g / 255.0, b / 255.0))
+
+    return snapped
