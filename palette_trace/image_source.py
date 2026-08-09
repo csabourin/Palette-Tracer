@@ -31,15 +31,27 @@ class DecodedImageSource:
         self.srgb = self.rgba_data[:, :, :3].astype(np.float32) / 255.0
         self.alpha = self.rgba_data[:, :, 3].astype(np.float32) / 255.0
 
-        # Precomputed OKLCH working representation (§21.1). Vectorized — the
-        # per-pixel Python loop this replaces cost one interpreter call per
-        # pixel and dominated decode time.
-        self.oklch = srgb_array_to_oklch(self.srgb).astype(np.float32)
+        self._oklch = None
 
         # Calculate SHA-256 fingerprint
         hasher = hashlib.sha256()
         hasher.update(self.rgba_data.tobytes())
         self.fingerprint = hasher.hexdigest()
+
+    @property
+    def oklch(self) -> np.ndarray:
+        """
+        The OKLCH working representation (§21.1), computed on first use.
+
+        Vectorised — the per-pixel Python loop this replaces cost one
+        interpreter call per pixel. It is deferred because only the pipeline
+        needs it: decoding a bitmap so it can be put on screen should not wait
+        on a colour-space conversion of every pixel that nothing has asked for
+        yet.
+        """
+        if self._oklch is None:
+            self._oklch = srgb_array_to_oklch(self.srgb).astype(np.float32)
+        return self._oklch
 
 
 def load_image_source(href_or_data: str, is_data_uri: bool) -> DecodedImageSource:

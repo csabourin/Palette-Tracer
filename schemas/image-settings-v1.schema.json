@@ -40,7 +40,16 @@
       "properties": {
         "entries": { "type": "array" },
         "layerOrder": { "type": "array", "items": { "type": "string" } },
-        "backgroundEntryId": { "type": ["string", "null"] }
+        "backgroundEntryId": { "type": ["string", "null"] },
+        "backgroundMatching": {
+          "type": "string",
+          "enum": ["all_matching", "edge_connected", "transparent"]
+        },
+        "backgroundForegroundPolicy": {
+          "description": "What becomes of a patch of the backdrop colour that the matching mode leaves in the foreground (SPEC §16.1). `hole_or_layer` keeps it as a hole wherever one can express it and gives it a layer of its own where one cannot.",
+          "type": "string",
+          "enum": ["hole_or_layer", "hole", "layer", "ignore"]
+        }
       }
     }
   }

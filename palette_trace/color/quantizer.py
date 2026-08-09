@@ -2,6 +2,8 @@
 
 import math
 
+import numpy as np
+
 from palette_trace.color.conversion import oklab_to_srgb, srgb_to_hex
 
 
@@ -54,123 +56,97 @@ def run_deterministic_quantization(
     )
 
     centers = list(fixed_centers)
-    candidate_pool = list(sorted_histogram)
 
     # Farthest-point initialization for automatic centres.
-    while len(centers) < fixed_count + actual_target and candidate_pool:
+    #
+    # The distance every candidate has to its nearest centre only ever falls,
+    # so it is carried between rounds and lowered by the newest centre alone,
+    # rather than recomputed against all of them. On a 6-bit histogram that is
+    # the difference between one pass and sixty-four.
+    candidates = np.asarray([item["oklab"] for item in sorted_histogram], dtype=np.float64)
+    candidate_weights = np.asarray(
+        [item["weight"] for item in sorted_histogram], dtype=np.float64
+    )
+    candidate_packed = np.asarray(
+        [item["packed_srgb"] for item in sorted_histogram], dtype=np.int64
+    )
+
+    available = np.ones(len(sorted_histogram), dtype=bool)
+    nearest = np.full(len(sorted_histogram), np.inf)
+    for center in centers:
+        nearest = np.minimum(nearest, ((candidates - np.asarray(center)) ** 2).sum(axis=1))
+
+    while len(centers) < fixed_count + actual_target and available.any():
         if not centers:
             selected_index = 0
         else:
-            selected_index = None
-            best_weighted_distance = -1.0
-            best_packed_srgb = float("inf")
-
-            for index, item in enumerate(candidate_pool):
-                point = item["oklab"]
-
-                minimum_distance = min(
-                    oklab_distance_sq(point, center)
-                    for center in centers
-                )
-
-                # Do not initialize a centre too close to an existing centre.
-                if minimum_distance < min_separation_sq:
-                    continue
-
-                weighted_distance = minimum_distance * item["weight"]
-
-                is_better_distance = (
-                    weighted_distance > best_weighted_distance
-                )
-                is_deterministic_tie_break = (
-                    math.isclose(
-                        weighted_distance,
-                        best_weighted_distance,
-                        abs_tol=1e-9,
-                    )
-                    and item["packed_srgb"] < best_packed_srgb
-                )
-
-                if is_better_distance or is_deterministic_tie_break:
-                    selected_index = index
-                    best_weighted_distance = weighted_distance
-                    best_packed_srgb = item["packed_srgb"]
-
-            if selected_index is None:
+            # Ties are broken towards the lowest packed sRGB value, which makes
+            # the choice depend on the colour rather than on iteration order.
+            eligible = np.flatnonzero(available & (nearest >= min_separation_sq))
+            if eligible.size == 0:
                 # No remaining candidate satisfies the minimum separation.
                 break
 
-        # Removing the selected candidate prevents duplicate initialization.
-        selected_item = candidate_pool.pop(selected_index)
-        centers.append(selected_item["oklab"])
+            weighted = nearest[eligible] * candidate_weights[eligible]
+            best = weighted.max()
+            tied = eligible[weighted >= best - max(1e-9, abs(best) * 1e-9)]
+            selected_index = int(tied[np.argmin(candidate_packed[tied])])
+
+        available[selected_index] = False
+        chosen = tuple(candidates[selected_index])
+        centers.append(chosen)
+        nearest = np.minimum(
+            nearest, ((candidates - candidates[selected_index]) ** 2).sum(axis=1)
+        )
 
     auto_centers = centers[fixed_count:]
 
     if not auto_centers:
         return []
 
+    # The assignment step runs once per iteration over the whole histogram —
+    # up to 262 144 bins for a 6-bit histogram — so it is done in numpy. The
+    # points and weights are lifted out of the dictionaries once, in histogram
+    # order, which is the order the tie-break depends on.
+    points = np.asarray([item["oklab"] for item in histogram], dtype=np.float64)
+    weights = np.asarray([item["weight"] for item in histogram], dtype=np.float64)
+    weighted_points = points * weights[:, None]
+
     def assign_clusters(
         current_centers: list[tuple[float, float, float]],
-    ) -> tuple[list[list[dict]], list[int | float]]:
-        clusters: list[list[dict]] = [
-            [] for _ in current_centers
-        ]
-        cluster_weights: list[int | float] = [
-            0 for _ in current_centers
-        ]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Returns (assignment, cluster_weights).
 
-        for item in histogram:
-            point = item["oklab"]
-            weight = item["weight"]
-
-            # Including the index in the key provides an explicit,
-            # deterministic tie-break.
-            best_index = min(
-                range(len(current_centers)),
-                key=lambda index: (
-                    oklab_distance_sq(
-                        point,
-                        current_centers[index],
-                    ),
-                    index,
-                ),
-            )
-
-            clusters[best_index].append(item)
-            cluster_weights[best_index] += weight
-
-        return clusters, cluster_weights
+        `assignment[i]` is the index of the centre that bin `i` belongs to.
+        `np.argmin` returns the first minimum, which is the same explicit
+        tie-break towards the lowest centre index the scalar form used.
+        """
+        centers = np.asarray(current_centers, dtype=np.float64)
+        distances = ((points[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
+        assignment = np.argmin(distances, axis=1)
+        cluster_weights = np.bincount(
+            assignment, weights=weights, minlength=len(current_centers)
+        )
+        return assignment, cluster_weights
 
     # K-Means iterations.
     for _ in range(max(0, max_iterations)):
-        clusters, cluster_weights = assign_clusters(centers)
+        assignment, cluster_weights = assign_clusters(centers)
+
+        # Weighted sum per cluster, all three channels at once.
+        sums = np.zeros((len(centers), 3), dtype=np.float64)
+        np.add.at(sums, assignment, weighted_points)
 
         max_shift = 0.0
         new_auto_centers: list[tuple[float, float, float]] = []
 
         for auto_index, old_center in enumerate(auto_centers):
             center_index = fixed_count + auto_index
-            items = clusters[center_index]
             total_weight = cluster_weights[center_index]
 
-            if total_weight > 0 and items:
-                proposed_center = (
-                    sum(
-                        item["oklab"][0] * item["weight"]
-                        for item in items
-                    )
-                    / total_weight,
-                    sum(
-                        item["oklab"][1] * item["weight"]
-                        for item in items
-                    )
-                    / total_weight,
-                    sum(
-                        item["oklab"][2] * item["weight"]
-                        for item in items
-                    )
-                    / total_weight,
-                )
+            if total_weight > 0:
+                proposed_center = tuple(sums[center_index] / total_weight)
             else:
                 proposed_center = old_center
 
@@ -225,8 +201,8 @@ def run_deterministic_quantization(
         result_entries.append(
             {
                 "hex": srgb_to_hex(red, green, blue),
-                "oklab": center,
-                "count": final_cluster_weights[center_index],
+                "oklab": tuple(float(value) for value in center),
+                "count": int(final_cluster_weights[center_index]),
             }
         )
 

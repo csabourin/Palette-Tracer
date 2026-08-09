@@ -73,6 +73,10 @@ class PotraceAdapter(TraceBackend):
                 "cornerSensitivity",
                 "curveSmoothing",
                 "optimization",
+                # Mapped to potrace's `turdsize` in `trace_mask` below. It was
+                # missing from this list, so every scan reported a limitation
+                # the backend does not in fact have (§18).
+                "minimumPathAreaPx2",
             ]),
         )
 

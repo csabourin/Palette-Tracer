@@ -19,12 +19,13 @@ Pre-release, under active development. See [docs/IMPLEMENTATION_STATUS.md](docs/
 
 ## What makes it different from ordinary auto-tracing
 
-* **Picked colours are exact, not suggestions.** A colour you sample from the image is the colour that comes out.
+* **Every colour is a real colour from the picture.** A colour you sample is the colour that comes out, and the ones chosen for you are snapped onto the nearest pixel colour the image actually contains — never an average across an edge that appears nowhere in it.
 * **Colour reach, not RGB distance.** Matching happens in OKLCH with separate hue, chroma and lightness tolerances, so "this red" can be broad while "this specific grey" stays narrow.
 * **Neutrals behave.** Hue is unreliable at low chroma, so its contribution is suppressed instead of producing arbitrary matches.
 * **Deterministic.** The same image and settings produce the same paths, every run. No reseeded clustering on each dialog open.
 * **Destination-aware.** Illustration, logo, screen printing, vinyl/paper cutting and laser destinations produce genuinely different geometry policies — stacked, trapped, exclusive layers, or named operation groups.
 * **Backend-neutral.** Vector tracing goes through a single protocol, so the engine is swappable and evaluated by conformance tests rather than assumed.
+* **Backdrops know what a hole is.** A patch of the backdrop colour sitting in the foreground — the white of an eye on a white ground — becomes a hole in whatever encloses it, or, where a hole cannot express it, a layer of its own in front.
 * **Works on a phone.** Load a picture, pinch to zoom, and pick colours with a magnifier that shows the individual pixel you are aiming at.
 
 ## Requirements
@@ -88,7 +89,24 @@ Run `palette-trace-web --help` for host, port and output options.
 
 ### On a phone
 
-The interface is built narrow-screen-first: pinch to zoom the picture, press and drag to pick a colour with a magnifier that shows the exact pixel under your finger, and everything technical stays folded away until you ask for it. Everything is reachable by keyboard too, including colour picking.
+The interface is built narrow-screen-first. The picture takes the screen; the
+controls are icons at a comfortable touch size around it.
+
+* Pinch to zoom, drag to pan, press and drag to pick a colour with a magnifier
+  that shows the exact pixel under your finger.
+* The palette is a strip along the bottom. Tap a colour to open it; **hold and
+  drag** it to change what is drawn in front of what.
+* One tap on **Backdrop** finds whatever runs around the edge of the picture and
+  makes it the backdrop, behind everything else.
+* **Add** takes a colour typed in any notation — hex, `rgb()`, `hsl()`, `hsv()`,
+  `lab()`, `lch()`, `oklab()`, `oklch()`, `cmyk()`, or a CSS colour name — and
+  offers to snap it to the closest colour the picture actually has.
+* Loading shows real progress, and the picture appears before the trace of it
+  is finished.
+* Every edit is undoable, by button or by <kbd>Ctrl/Cmd</kbd>+<kbd>Z</kbd>.
+
+Everything is reachable by keyboard too, including colour picking and reordering
+(<kbd>Alt</kbd> + arrows on a swatch).
 
 Because §9.1 binds the server to `127.0.0.1`, reaching it from a phone means running it somewhere the phone can see — set a `PORT` environment variable, or pass `--host`, and understand what you are exposing before you do.
 

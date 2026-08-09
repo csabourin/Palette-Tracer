@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#101418">
+  <meta name="theme-color" content="#0e1216">
   <title>Palette Trace</title>
   <!-- Empty on purpose: it stops the browser requesting /favicon.ico, which
        this server does not serve, without loading anything remote (§31). -->
@@ -14,12 +14,89 @@
 <body data-view="booting">
   <a class="skip-link" href="#stage">Skip to the picture</a>
 
+  <!-- ===================================================================
+       Icons. Drawn once here and referenced by <use> everywhere else, so a
+       toolbar costs no requests and no font. Every control that shows one
+       still carries a label for anything that is not looking at pixels.
+       =================================================================== -->
+  <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-dropper" viewBox="0 0 24 24">
+      <path d="M17.4 2.6a3 3 0 0 1 4 4L18 10l1 1-1.5 1.5L15 10 6 19l-3 1 1-3 9-9-2.5-2.5L10 4l1 1z"/>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-backdrop" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/>
+    </symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24">
+      <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.6"/>
+    </symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24">
+      <path d="M3 3l18 18M10.6 6.2A9.9 9.9 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.3 3.8M6.3 8.2A16.6 16.6 0 0 0 2 12s3.6 6 10 6a9.7 9.7 0 0 0 3.6-.7"/>
+    </symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24">
+      <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke-width="2.6"/>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M4 7h16M10 7V4h4v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>
+    </symbol>
+    <symbol id="i-zoom-in" viewBox="0 0 24 24">
+      <circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6"/>
+    </symbol>
+    <symbol id="i-zoom-out" viewBox="0 0 24 24">
+      <circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M7.5 10.5h6"/>
+    </symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24">
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+    </symbol>
+    <symbol id="i-send-back" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="11" height="11" rx="1.5"/><path d="M10 20h11V9h-4"/>
+    </symbol>
+    <symbol id="i-bring-front" viewBox="0 0 24 24">
+      <path d="M3 4h11v11"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>
+    </symbol>
+    <symbol id="i-picture" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="m4 17 5-5 4 4 3-2.5 4 3.5"/>
+    </symbol>
+    <symbol id="i-shapes" viewBox="0 0 24 24">
+      <path d="M8 3 3 12h10zM17.5 13a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z"/><rect x="3" y="15" width="7" height="7" rx="1"/>
+    </symbol>
+    <symbol id="i-coverage" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
+    </symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M4 9h11a5 5 0 0 1 0 10h-6M4 9l4-4M4 9l4 4"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M20 9H9a5 5 0 0 0 0 10h6M20 9l-4-4M20 9l-4 4"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24">
+      <path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/>
+    </symbol>
+    <symbol id="i-more" viewBox="0 0 24 24">
+      <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12.5 5 5L20 6.5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24">
+      <path d="M3 8h3.5L8 5.5h8L17.5 8H21v12H3z"/><circle cx="12" cy="13.5" r="3.6"/>
+    </symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 3h10v10H3z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4 19h16"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24">
+      <rect x="4.5" y="10" width="15" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+    </symbol>
+    <symbol id="i-wand" viewBox="0 0 24 24">
+      <path d="m4 20 11-11M14.5 3.5 15 6l2.5.5L15 7l-.5 2.5L14 7l-2.5-.5L14 6zM19 12l.4 1.8 1.8.4-1.8.4-.4 1.8-.4-1.8-1.8-.4 1.8-.4z"/>
+    </symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24">
+      <path d="M12 4 2.5 20h19zM12 10v4.5M12 17.2v.1"/>
+    </symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></symbol>
+  </svg>
+
   <div id="status-region" class="visually-hidden" role="status" aria-live="polite"></div>
   <div id="alert-region" class="alert-banner" role="alert" hidden></div>
+  <span id="color-probe" class="visually-hidden" aria-hidden="true"></span>
 
   <!-- ===================================================================
-       Step 1 — load a picture. Until there is one, there is nothing else
-       worth showing, so this is the only thing on screen (§9.2).
+       Step 1 — load a picture.
        =================================================================== -->
   <section id="view-start" class="view view-start" aria-labelledby="start-title">
     <div class="start-card">
@@ -29,22 +106,28 @@
         Load a picture, choose the colours that matter, and get clean vector artwork back.
       </p>
 
-      <!-- The input keeps its own focus stop rather than being display:none,
-           so the dropzone is reachable by keyboard as well as by pointer. -->
       <input type="file" id="file-input" class="visually-hidden"
-             accept="image/png,image/jpeg,image/gif,image/bmp,image/tiff,image/webp">
+             accept="image/png,image/jpeg,image/gif,image/bmp,image/tiff,image/webp,image/heic,image/heif">
       <label class="dropzone" id="dropzone" for="file-input">
+        <svg class="icon icon-lg" aria-hidden="true"><use href="#i-folder"/></svg>
         <span class="dropzone-verb">Choose a picture</span>
         <span class="dropzone-hint">or drag one here</span>
       </label>
 
-      <button type="button" class="btn btn-secondary btn-wide" id="btn-take-photo">Take a photo</button>
+      <button type="button" class="btn btn-secondary btn-wide" id="btn-take-photo">
+        <svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg>
+        <span>Take a photo</span>
+      </button>
       <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+
+      <div class="loader" id="start-loader" hidden>
+        <div class="loader-bar"><div class="loader-fill" id="start-loader-fill"></div></div>
+        <p class="loader-text" id="start-loader-text">Reading your picture…</p>
+      </div>
 
       <p class="start-privacy">
         Your picture stays on this machine. Nothing is uploaded to the internet.
       </p>
-      <p class="start-busy" id="start-busy" hidden>Reading your picture…</p>
     </div>
   </section>
 
@@ -52,16 +135,32 @@
        Step 2 — the workspace.
        =================================================================== -->
   <div id="view-workspace" class="view view-workspace">
+    <div class="topline" id="topline" hidden><div class="topline-fill" id="topline-fill"></div></div>
+
     <header class="appbar">
-      <div class="appbar-identity">
-        <h1 class="appbar-title">Palette Trace</h1>
-        <p class="appbar-subject" id="subject-name"></p>
-      </div>
+      <h1 class="appbar-title">
+        <span class="appbar-name" id="subject-name"></span>
+        <span class="appbar-size" id="subject-size"></span>
+      </h1>
       <div class="appbar-actions">
-        <span class="badge badge-warn" id="source-changed-badge" hidden>Picture changed</span>
-        <button type="button" class="btn btn-ghost btn-icon" id="btn-menu"
-                aria-haspopup="dialog" aria-label="More actions">⋯</button>
-        <button type="button" class="btn btn-primary" id="btn-commit">Save</button>
+        <button type="button" class="btn btn-icon" id="btn-undo" aria-label="Undo" title="Undo" disabled>
+          <svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg>
+        </button>
+        <button type="button" class="btn btn-icon" id="btn-redo" aria-label="Redo" title="Redo" disabled>
+          <svg class="icon" aria-hidden="true"><use href="#i-redo"/></svg>
+        </button>
+        <button type="button" class="btn btn-icon badge-dot" id="btn-warnings"
+                aria-label="Show warnings" title="Warnings" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-warn"/></svg>
+        </button>
+        <button type="button" class="btn btn-icon" id="btn-menu"
+                aria-haspopup="dialog" aria-label="More actions" title="More actions">
+          <svg class="icon" aria-hidden="true"><use href="#i-more"/></svg>
+        </button>
+        <button type="button" class="btn btn-primary btn-commit" id="btn-commit" aria-label="Save">
+          <svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>
+          <span class="btn-text" id="btn-commit-text">Save</span>
+        </button>
       </div>
     </header>
 
@@ -70,196 +169,105 @@
       <section class="stage" id="stage" aria-label="Picture">
         <div class="stage-viewport" id="viewport">
           <canvas id="preview-canvas" tabindex="0" role="img"
-                  aria-label="The picture you are tracing. Use the Pick a colour button to sample from it."></canvas>
+                  aria-label="The picture you are tracing. Use the eyedropper to sample a colour from it."></canvas>
 
-          <!-- Magnifier. Follows the pointer while picking so a single source
-               pixel can be targeted on a touchscreen (§9.3). -->
           <div class="loupe" id="loupe" hidden aria-hidden="true">
             <canvas id="loupe-canvas" width="180" height="180"></canvas>
             <span class="loupe-readout" id="loupe-readout">#000000</span>
           </div>
 
-          <div class="stage-hud">
-            <button type="button" class="btn btn-hud" id="btn-zoom-out" aria-label="Zoom out">−</button>
-            <span class="hud-zoom" id="zoom-level">100%</span>
-            <button type="button" class="btn btn-hud" id="btn-zoom-in" aria-label="Zoom in">+</button>
-            <button type="button" class="btn btn-hud" id="btn-zoom-fit">Fit</button>
-            <button type="button" class="btn btn-hud" id="btn-zoom-actual">1:1</button>
+          <div class="stage-modes" role="radiogroup" aria-label="What to show">
+            <button type="button" class="btn btn-hud" role="radio" aria-checked="true"
+                    data-mode="source" aria-label="Show the picture" title="Picture">
+              <svg class="icon" aria-hidden="true"><use href="#i-picture"/></svg>
+            </button>
+            <button type="button" class="btn btn-hud" role="radio" aria-checked="false"
+                    data-mode="result" aria-label="Show the result" title="Result">
+              <svg class="icon" aria-hidden="true"><use href="#i-shapes"/></svg>
+            </button>
+            <button type="button" class="btn btn-hud" role="radio" aria-checked="false"
+                    data-mode="coverage" aria-label="Show which colour claimed what" title="Coverage">
+              <svg class="icon" aria-hidden="true"><use href="#i-coverage"/></svg>
+            </button>
+          </div>
+
+          <div class="stage-zoom">
+            <button type="button" class="btn btn-hud" id="btn-zoom-in" aria-label="Zoom in" title="Zoom in">
+              <svg class="icon" aria-hidden="true"><use href="#i-zoom-in"/></svg>
+            </button>
+            <button type="button" class="btn btn-hud" id="btn-zoom-out" aria-label="Zoom out" title="Zoom out">
+              <svg class="icon" aria-hidden="true"><use href="#i-zoom-out"/></svg>
+            </button>
+            <button type="button" class="btn btn-hud" id="btn-zoom-fit" aria-label="Fit the picture on screen" title="Fit">
+              <svg class="icon" aria-hidden="true"><use href="#i-fit"/></svg>
+            </button>
+            <button type="button" class="btn btn-hud hud-ratio" id="btn-zoom-actual"
+                    aria-label="Show actual pixels" title="Actual pixels">1:1</button>
+            <span class="hud-zoom" id="zoom-level" aria-live="off">100%</span>
           </div>
 
           <p class="stage-note" id="resize-notice" hidden></p>
+          <p class="stage-caption" id="mode-caption"></p>
         </div>
 
         <!-- Picking overlay: only present while actually picking. -->
         <div class="pickbar" id="pickbar" hidden>
-          <p class="pickbar-instruction" id="pickbar-instruction">
-            Press the picture and drag. The magnifier shows the exact pixel — let go to add that colour.
+          <p class="pickbar-instruction">
+            Press the picture and drag. Let go to add that colour.
           </p>
-          <fieldset class="segmented segmented-small">
-            <legend class="visually-hidden">How much to sample</legend>
-            <span class="segment">
-              <input type="radio" name="sample-mode" id="sample-exact" value="exact">
-              <label for="sample-exact">One pixel</label>
-            </span>
-            <span class="segment">
-              <input type="radio" name="sample-mode" id="sample-median" value="5x5_median" checked>
-              <label for="sample-median">Small area</label>
-            </span>
-            <span class="segment">
-              <input type="radio" name="sample-mode" id="sample-dominant" value="15x15_dominant">
-              <label for="sample-dominant">Wider area</label>
-            </span>
-          </fieldset>
-          <button type="button" class="btn btn-secondary" id="btn-stop-picking">Done picking</button>
+          <div class="segmented segmented-small" role="radiogroup" aria-label="How much to sample">
+            <button type="button" role="radio" aria-checked="true" data-sample="exact">1&nbsp;px</button>
+            <button type="button" role="radio" aria-checked="false" data-sample="5x5_median">5&nbsp;px</button>
+            <button type="button" role="radio" aria-checked="false" data-sample="15x15_dominant">15&nbsp;px</button>
+          </div>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-stop-picking">Done</button>
         </div>
-
-        <fieldset class="segmented" id="view-modes">
-          <legend class="visually-hidden">What to show</legend>
-          <span class="segment">
-            <input type="radio" name="preview-mode" id="mode-source" value="source" checked>
-            <label for="mode-source">Picture</label>
-          </span>
-          <span class="segment">
-            <input type="radio" name="preview-mode" id="mode-result" value="result">
-            <label for="mode-result">Result</label>
-          </span>
-          <span class="segment">
-            <input type="radio" name="preview-mode" id="mode-coverage" value="coverage">
-            <label for="mode-coverage">Coverage</label>
-          </span>
-        </fieldset>
-        <p class="stage-caption" id="mode-caption"></p>
       </section>
 
-      <!-- ---------- The controls ---------- -->
-      <div class="panel" id="panel">
-        <p class="warnings" id="warnings-summary" hidden></p>
+      <!-- ---------- The colours ---------- -->
+      <div class="dock" id="dock">
+        <p class="dock-warnings" id="warnings-summary" hidden></p>
 
-        <section class="card">
-          <div class="card-head">
-            <h2>Colours</h2>
-            <span class="badge" id="colour-count-badge"></span>
-          </div>
-          <p class="card-result" id="colours-result"></p>
+        <div class="palette-scroller">
+          <ul class="palette" id="swatch-list" aria-label="Colours in this trace, back to front"></ul>
+        </div>
 
-          <ul class="swatch-list" id="swatch-list" aria-label="Colours in this trace"></ul>
-
-          <button type="button" class="btn btn-accent btn-wide" id="btn-pick">
-            Pick a colour from the picture
+        <div class="toolbar" role="toolbar" aria-label="Colour tools">
+          <button type="button" class="btn btn-tool btn-accent" id="btn-pick"
+                  aria-label="Pick a colour from the picture" title="Pick from the picture">
+            <svg class="icon" aria-hidden="true"><use href="#i-dropper"/></svg>
+            <span class="tool-text">Pick</span>
           </button>
-          <p class="card-hint">
-            A colour you pick comes out exactly as picked, and keeps the pixels around it.
-            The rest are chosen for you.
-          </p>
-        </section>
+          <button type="button" class="btn btn-tool" id="btn-add-colour"
+                  aria-label="Type a colour" title="Type a colour">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+            <span class="tool-text">Add</span>
+          </button>
+          <button type="button" class="btn btn-tool" id="btn-auto-backdrop"
+                  aria-label="Set the backdrop automatically" title="Backdrop">
+            <svg class="icon" aria-hidden="true"><use href="#i-backdrop"/></svg>
+            <span class="tool-text">Backdrop</span>
+          </button>
 
-        <section class="card">
-          <div class="card-head">
-            <h2>How many colours</h2>
-          </div>
-          <div class="stepper">
-            <button type="button" class="btn btn-step" id="btn-fewer" aria-label="One fewer colour">−</button>
+          <div class="stepper" role="group" aria-label="How many colours">
+            <button type="button" class="btn btn-step" id="btn-fewer" aria-label="One fewer colour" title="One fewer colour">
+              <svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg>
+            </button>
             <input type="number" id="input-scans" min="1" max="64" value="4"
                    aria-label="Number of colours" inputmode="numeric">
-            <button type="button" class="btn btn-step" id="btn-more" aria-label="One more colour">+</button>
+            <button type="button" class="btn btn-step" id="btn-more" aria-label="One more colour" title="One more colour">
+              <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+            </button>
           </div>
-          <p class="card-result" id="scans-result"></p>
-        </section>
 
-        <section class="card">
-          <div class="card-head">
-            <h2>What are you making?</h2>
-          </div>
-          <ul class="choice-list" id="destination-list" role="radiogroup"
-              aria-label="What are you making?"></ul>
-          <p class="card-result" id="destination-result"></p>
-        </section>
-
-        <!-- Everything below here is the technical surface. It is real, and it
-             is reachable, but it is closed until someone goes looking (§9.2). -->
-        <details class="card card-advanced" id="advanced">
-          <summary>
-            <span class="summary-title">Fine-tuning</span>
-            <span class="summary-hint">Background, tracing engine, shape cleanup</span>
-          </summary>
-          <div class="card-body">
-
-            <section class="subcard">
-              <h3>Backdrop</h3>
-              <p class="card-hint">Treat one colour as the backdrop behind everything else.</p>
-              <div class="field">
-                <label for="select-background-entry">Which colour is the backdrop</label>
-                <select id="select-background-entry"></select>
-              </div>
-              <div class="field" id="background-detail" hidden>
-                <fieldset class="radio-set">
-                  <legend>Which pixels count as backdrop</legend>
-                  <span class="radio-option">
-                    <input type="radio" name="bg-matching" id="bg-matching-all" value="all_matching">
-                    <label for="bg-matching-all">Every pixel of that colour</label>
-                  </span>
-                  <span class="radio-option">
-                    <input type="radio" name="bg-matching" id="bg-matching-edge" value="edge_connected">
-                    <label for="bg-matching-edge">Only what touches the edge of the picture</label>
-                  </span>
-                  <span class="radio-option">
-                    <input type="radio" name="bg-matching" id="bg-matching-alpha" value="transparent">
-                    <label for="bg-matching-alpha">The see-through pixels</label>
-                  </span>
-                </fieldset>
-                <fieldset class="radio-set">
-                  <legend>What to do with it</legend>
-                  <span class="radio-option">
-                    <input type="radio" name="bg-output" id="bg-output-keep" value="keep_paths">
-                    <label for="bg-output-keep">Trace it like any other colour</label>
-                  </span>
-                  <span class="radio-option">
-                    <input type="radio" name="bg-output" id="bg-output-omit" value="omit">
-                    <label for="bg-output-omit">Leave it out entirely</label>
-                  </span>
-                  <span class="radio-option">
-                    <input type="radio" name="bg-output" id="bg-output-rect" value="replace_with_rectangle">
-                    <label for="bg-output-rect">Replace it with a plain rectangle</label>
-                  </span>
-                </fieldset>
-              </div>
-            </section>
-
-            <section class="subcard">
-              <h3>Tracing engine</h3>
-              <div class="field">
-                <label for="select-backend">Which engine draws the shapes</label>
-                <select id="select-backend">
-                  <option value="auto">Choose the best available</option>
-                  <option value="potrace">Potrace</option>
-                  <option value="vtracer">VTracer</option>
-                  <option value="python_contour">Built-in fallback</option>
-                </select>
-                <p class="field-help">Leave this alone unless a result looks wrong.</p>
-              </div>
-            </section>
-
-            <section class="subcard">
-              <h3>Start over</h3>
-              <p class="card-hint">
-                Puts shape cleanup and geometry back to what this destination expects.
-                Your colours are kept.
-              </p>
-              <button type="button" class="btn btn-secondary btn-wide" id="btn-reset-destination">
-                Reset the technical settings
-              </button>
-            </section>
-
-          </div>
-        </details>
+          <button type="button" class="btn btn-tool" id="btn-tune"
+                  aria-label="Settings" title="Settings">
+            <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg>
+            <span class="tool-text">Setup</span>
+          </button>
+        </div>
       </div>
     </main>
-
-    <!-- Sticky primary action on narrow screens. -->
-    <div class="actionbar">
-      <button type="button" class="btn btn-secondary" id="btn-cancel-bottom">Cancel</button>
-      <button type="button" class="btn btn-primary btn-grow" id="btn-commit-bottom">Save</button>
-    </div>
   </div>
 
   <!-- ===================================================================
@@ -278,22 +286,201 @@
   <dialog id="sheet-scan" class="sheet" aria-labelledby="sheet-scan-title">
     <div class="sheet-head">
       <h2 id="sheet-scan-title">Colour</h2>
-      <button type="button" class="btn btn-ghost btn-icon" data-dialog-cancel aria-label="Close">✕</button>
+      <button type="button" class="btn btn-icon" data-dialog-cancel aria-label="Close">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
     </div>
     <div class="sheet-body" id="sheet-scan-body"></div>
+  </dialog>
+
+  <!-- ===================== Type a colour ===================== -->
+  <dialog id="sheet-colour" class="sheet" aria-labelledby="sheet-colour-title">
+    <form id="form-colour" method="dialog">
+      <div class="sheet-head">
+        <h2 id="sheet-colour-title">Add a colour</h2>
+        <button type="button" class="btn btn-icon" data-dialog-cancel aria-label="Close">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+        </button>
+      </div>
+      <div class="sheet-body">
+        <div class="colour-preview">
+          <span class="colour-preview-chip" id="colour-preview-chip" aria-hidden="true"></span>
+          <label class="colour-preview-native" title="Pick from a colour wheel">
+            <input type="color" id="colour-native" value="#888888" aria-label="Pick from a colour wheel">
+          </label>
+          <span class="colour-preview-text">
+            <span class="colour-preview-hex" id="colour-preview-hex">#888888</span>
+            <span class="colour-preview-note" id="colour-preview-note"></span>
+          </span>
+        </div>
+
+        <div class="field">
+          <label for="colour-input">Colour value</label>
+          <input type="text" id="colour-input" autocomplete="off" autocapitalize="off"
+                 spellcheck="false" placeholder="#3B7DD8, rgb(59 125 216), oklch(60% .14 255), teal…">
+          <p class="field-help">
+            Hex, RGB, HSL, HSV, LAB, LCH, OKLAB, OKLCH, CMYK or a CSS colour name.
+          </p>
+        </div>
+
+        <div class="format-chips" id="colour-formats" aria-label="The same colour in other notations"></div>
+
+        <div class="switch-row">
+          <label for="colour-snap">Use the closest colour in the picture</label>
+          <input type="checkbox" id="colour-snap" checked>
+        </div>
+        <p class="card-hint">
+          A colour that is not in the picture has no pixels to claim. Leave this on
+          unless you are naming an output colour deliberately.
+        </p>
+
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-secondary" data-dialog-cancel>Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-colour-confirm">Add</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===================== Setup / fine-tuning ===================== -->
+  <dialog id="sheet-setup" class="sheet sheet-tall" aria-labelledby="sheet-setup-title">
+    <div class="sheet-head">
+      <h2 id="sheet-setup-title">Setup</h2>
+      <button type="button" class="btn btn-icon" data-dialog-cancel aria-label="Close">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <section class="subcard">
+        <h3>What are you making?</h3>
+        <ul class="choice-list" id="destination-list" role="radiogroup"
+            aria-label="What are you making?"></ul>
+        <p class="card-result" id="destination-result"></p>
+      </section>
+
+      <section class="subcard">
+        <h3>Backdrop</h3>
+        <p class="card-hint">Treat one colour as the backdrop behind everything else.</p>
+        <div class="field">
+          <label for="select-background-entry">Which colour is the backdrop</label>
+          <select id="select-background-entry"></select>
+        </div>
+        <div class="field" id="background-detail" hidden>
+          <fieldset class="radio-set">
+            <legend>Which pixels count as backdrop</legend>
+            <span class="radio-option">
+              <input type="radio" name="bg-matching" id="bg-matching-all" value="all_matching">
+              <label for="bg-matching-all">Every pixel of that colour</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="bg-matching" id="bg-matching-edge" value="edge_connected">
+              <label for="bg-matching-edge">Only what touches the edge of the picture</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="bg-matching" id="bg-matching-alpha" value="transparent">
+              <label for="bg-matching-alpha">The see-through pixels</label>
+            </span>
+          </fieldset>
+          <fieldset class="radio-set">
+            <legend>What to do with it</legend>
+            <span class="radio-option">
+              <input type="radio" name="bg-output" id="bg-output-keep" value="keep_paths">
+              <label for="bg-output-keep">Trace it like any other colour</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="bg-output" id="bg-output-omit" value="omit">
+              <label for="bg-output-omit">Leave it out entirely</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="bg-output" id="bg-output-rect" value="replace_with_rectangle">
+              <label for="bg-output-rect">Replace it with a plain rectangle</label>
+            </span>
+          </fieldset>
+          <fieldset class="radio-set" id="background-foreground-set">
+            <legend>Backdrop-coloured shapes in the foreground</legend>
+            <span class="radio-option">
+              <input type="radio" name="bg-foreground" id="bg-fg-auto" value="hole_or_layer">
+              <label for="bg-fg-auto">Hole where that works, otherwise a layer in front</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="bg-foreground" id="bg-fg-hole" value="hole">
+              <label for="bg-fg-hole">Always a hole</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="bg-foreground" id="bg-fg-layer" value="layer">
+              <label for="bg-fg-layer">Always a layer in front</label>
+            </span>
+            <span class="radio-option">
+              <input type="radio" name="bg-foreground" id="bg-fg-ignore" value="ignore">
+              <label for="bg-fg-ignore">Leave them out</label>
+            </span>
+          </fieldset>
+        </div>
+      </section>
+
+      <section class="subcard">
+        <h3>Tracing engine</h3>
+        <div class="field">
+          <label for="select-backend">Which engine draws the shapes</label>
+          <select id="select-backend">
+            <option value="auto">Choose the best available</option>
+            <option value="potrace">Potrace</option>
+            <option value="vtracer">VTracer</option>
+            <option value="python_contour">Built-in fallback</option>
+          </select>
+          <p class="field-help">Leave this alone unless a result looks wrong.</p>
+        </div>
+      </section>
+
+      <section class="subcard">
+        <h3>Start over</h3>
+        <p class="card-hint">
+          Puts shape cleanup and geometry back to what this destination expects.
+          Your colours are kept.
+        </p>
+        <button type="button" class="btn btn-secondary btn-wide" id="btn-reset-destination">
+          Reset the technical settings
+        </button>
+      </section>
+    </div>
+  </dialog>
+
+  <!-- ===================== Warnings ===================== -->
+  <dialog id="sheet-warnings" class="sheet" aria-labelledby="sheet-warnings-title">
+    <div class="sheet-head">
+      <h2 id="sheet-warnings-title">Worth knowing</h2>
+      <button type="button" class="btn btn-icon" data-dialog-cancel aria-label="Close">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body"><ul class="warning-list" id="warning-list"></ul></div>
   </dialog>
 
   <!-- ===================== More actions ===================== -->
   <dialog id="sheet-menu" class="sheet" aria-labelledby="sheet-menu-title">
     <div class="sheet-head">
       <h2 id="sheet-menu-title">More actions</h2>
-      <button type="button" class="btn btn-ghost btn-icon" data-dialog-cancel aria-label="Close">✕</button>
+      <button type="button" class="btn btn-icon" data-dialog-cancel aria-label="Close">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
     </div>
     <div class="sheet-body">
-      <button type="button" class="btn btn-menu" id="btn-change-image">Use a different picture</button>
-      <button type="button" class="btn btn-menu" id="btn-save-preset">Save these settings for reuse</button>
-      <button type="button" class="btn btn-menu" id="btn-load-preset">Apply saved settings</button>
-      <button type="button" class="btn btn-menu btn-menu-quiet" id="btn-cancel">Cancel and discard</button>
+      <button type="button" class="btn btn-menu" id="btn-change-image">
+        <svg class="icon" aria-hidden="true"><use href="#i-picture"/></svg>
+        <span>Use a different picture</span>
+      </button>
+      <button type="button" class="btn btn-menu" id="btn-save-preset">
+        <svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>
+        <span>Save these settings for reuse</span>
+      </button>
+      <button type="button" class="btn btn-menu" id="btn-load-preset">
+        <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
+        <span>Apply saved settings</span>
+      </button>
+      <button type="button" class="btn btn-menu btn-menu-quiet" id="btn-cancel">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+        <span id="btn-cancel-text">Cancel and discard</span>
+      </button>
     </div>
   </dialog>
 
@@ -326,7 +513,9 @@
     <form method="dialog" id="form-save-preset">
       <div class="sheet-head">
         <h2 id="save-preset-title">Save these settings</h2>
-        <button type="button" class="btn btn-ghost btn-icon" data-dialog-cancel aria-label="Close">✕</button>
+        <button type="button" class="btn btn-icon" data-dialog-cancel aria-label="Close">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+        </button>
       </div>
       <div class="sheet-body">
         <div class="field">
@@ -364,7 +553,9 @@
   <dialog id="dialog-load-preset" class="sheet" aria-labelledby="load-preset-title">
     <div class="sheet-head">
       <h2 id="load-preset-title">Apply saved settings</h2>
-      <button type="button" class="btn btn-ghost btn-icon" data-dialog-cancel aria-label="Close">✕</button>
+      <button type="button" class="btn btn-icon" data-dialog-cancel aria-label="Close">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
     </div>
     <div class="sheet-body">
       <ul id="preset-list" class="preset-list" aria-label="Saved settings"></ul>
