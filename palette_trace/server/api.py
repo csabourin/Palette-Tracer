@@ -199,6 +199,17 @@ def _run_pipeline(session, preview: bool = False) -> dict:
     (§17.4).
     """
     scale = _preview_scale(session) if preview else 1.0
+
+    # Let go of the previous run before starting the next. Both hold traced
+    # geometry and per-scan masks for the whole bitmap, and the full-resolution
+    # run behind an export is the largest of them — keeping a preview alive
+    # across it peaks at the sum of the two for no benefit, since the run about
+    # to happen replaces it either way. On a small container that difference is
+    # the process being killed, which the browser sees as a reply from the proxy
+    # rather than from this server.
+    session.controller = None
+    session.pipeline_output = None
+
     session.controller = PipelineController(session.image_source, session.settings, scale)
     output = session.controller.run_pipeline()
     output["previewScale"] = session.controller.effective_scale
@@ -289,9 +300,12 @@ def _build_result_svg(session) -> str:
     be given. §17.4 makes interaction cheap by previewing — it does not make the
     delivered file a preview.
     """
+    # Read through the session rather than into a local first: a local
+    # reference to the cached preview would keep it alive for the duration of
+    # the full-resolution run that is meant to replace it.
+    if session.pipeline_output is None or session.pipeline_output_is_preview:
+        _run_pipeline(session)
     output = session.pipeline_output
-    if output is None or session.pipeline_output_is_preview:
-        output = _run_pipeline(session)
     backend = output.get("backend", {})
     source = session.image_source
 

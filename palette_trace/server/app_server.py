@@ -5,10 +5,12 @@ Serves static frontend assets and API endpoints.
 
 import json
 import threading
+import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from palette_trace.errors import PaletteTraceError
 from palette_trace.server.api import handle_api_request
 
 WEB_DIR = Path(__file__).parent.parent / "web"
@@ -29,11 +31,7 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/"):
-            headers = dict(self.headers.items())
-            status, res = handle_api_request(
-                self.session, self.path.split("?")[0], "GET", {}, headers
-            )
-            self._send_json(status, res)
+            self._send_json(*self._api_response("GET", {}, dict(self.headers.items())))
         else:
             self._serve_static_file(self.path)
 
@@ -53,11 +51,64 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
         raw_body = self.rfile.read(length) if length > 0 else b"{}"
         body = self._parse_body(raw_body)
 
-        headers = dict(self.headers.items())
-        status, res = handle_api_request(
-            self.session, self.path.split("?")[0], "POST", body, headers
-        )
-        self._send_json(status, res)
+        self._send_json(*self._api_response("POST", body, dict(self.headers.items())))
+
+    def _api_response(self, method: str, body: dict, headers: dict) -> tuple[int, dict]:
+        """
+        Answers one `/api/` request — and answers it whatever happens.
+
+        Every reply under `/api/` is JSON, and the interface leans on that to
+        tell "this request failed" apart from "something other than this server
+        answered": a reply it cannot parse is reported as coming from a proxy or
+        from the wrong address rather than from here.
+
+        An exception escaping a handler used to break that promise in the worst
+        way available. `BaseHTTPRequestHandler` sends *nothing* for a handler
+        that raises — it drops the connection — so the browser saw an empty
+        reply, and behind a reverse proxy it saw the proxy's own HTML error
+        page. On Replit that is a 404, which the interface then reported as a
+        problem with an address that was in fact perfectly correct. The real
+        fault — a directory that could not be written, a picture too large to
+        trace twice over — was never named anywhere the user could see it.
+
+        So every exception becomes a JSON reply here. The full traceback goes to
+        the console, where the person running the server can read it; the
+        browser is told the kind of failure and nothing more, because an
+        exception message can carry a local filesystem path and §9.1 keeps those
+        out of browser-visible data.
+        """
+        path = self.path.split("?")[0]
+        try:
+            return handle_api_request(self.session, path, method, body, headers)
+        except PaletteTraceError as exc:
+            # A refusal this application knows how to describe. These messages
+            # are written to be read by the user, so they are passed on as-is —
+            # the same way the endpoints that catch them already do.
+            return (400, {"error": str(exc)})
+        except MemoryError:
+            self._log_failure(path)
+            return (500, {"error": (
+                "There was not enough memory to finish that. A smaller picture, "
+                "or fewer scans, should get through."
+            )})
+        except Exception as exc:
+            self._log_failure(path)
+            return (500, {"error": (
+                f"Palette Trace could not finish that request ({type(exc).__name__}). "
+                "The details are in the console of the machine running the server."
+            )})
+
+    def _log_failure(self, path: str):
+        """
+        Prints an unexpected failure to the console.
+
+        `log_message` is silenced for ordinary requests, which is right for a
+        local tool that would otherwise narrate every settings change. A handler
+        that raised is the exact opposite case: it is the only record of why a
+        request failed, and it costs one traceback per genuine fault.
+        """
+        print(f"Palette Trace: {path} failed.")
+        traceback.print_exc()
 
     def _parse_body(self, raw_body: bytes) -> dict:
         """

@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from palette_trace.errors import PaletteTraceError
 from palette_trace.settings import create_palette_entry
 
 _INCLUDES_BY_SCOPE = {
@@ -36,10 +37,24 @@ _INCLUDES_BY_SCOPE = {
 
 
 def get_user_presets_dir() -> Path:
-    """Returns directory path for user-saved presets."""
-    home = Path.home()
-    preset_dir = home / ".config" / "palette-trace" / "presets"
-    preset_dir.mkdir(parents=True, exist_ok=True)
+    """
+    Returns directory path for user-saved presets, creating it if needed.
+
+    A desktop home directory is writable and this always succeeds. A container
+    is where it does not: a read-only image, a home that is not the process's
+    own, a `$HOME` pointing at nothing. That is a condition worth naming — the
+    settings the user asked to keep are not being kept — so it is raised as an
+    error this application can describe rather than as a bare `OSError` from
+    three frames down.
+    """
+    preset_dir = Path.home() / ".config" / "palette-trace" / "presets"
+    try:
+        preset_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PaletteTraceError(
+            "Saved settings live in a folder this machine will not let Palette "
+            f"Trace create ({exc.strerror or exc}). Nothing was saved."
+        ) from exc
     return preset_dir
 
 
@@ -200,6 +215,13 @@ def save_user_preset(name: str, description: str, settings: dict, scope: str = "
         "configurationPatch": build_configuration_patch(settings, scope),
     }
     file_path = p_dir / f"{puuid}.json"
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(preset_obj, f, indent=2)
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(preset_obj, f, indent=2)
+    except OSError as exc:
+        # A directory that exists is not a directory that can be written to —
+        # a full disk and a read-only mount both get this far.
+        raise PaletteTraceError(
+            f"“{name}” could not be written to disk ({exc.strerror or exc})."
+        ) from exc
     return preset_obj
