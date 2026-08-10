@@ -1,5 +1,9 @@
 """
-SVG Path data normalization, scaling and SVG sanitization.
+SVG path data normalization and scaling.
+
+This is the whole of the backend output boundary (§31): an adapter hands back
+path `d` strings and nothing else, so no backend-authored SVG fragment is ever
+inserted into a document and there is no markup here left to sanitize.
 """
 
 import re
@@ -25,8 +29,7 @@ def normalize_svg_path_data(path_d: str) -> str:
     cleaned = re.sub(r"<[^>]*>", "", path_d)
     # Ensure whitespace around command letters
     cleaned = re.sub(r"([a-zA-Z])", r" \1 ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 def scale_svg_path_data(path_d: str, factor: float) -> str:
     """
@@ -71,14 +74,3 @@ def scale_svg_path_data(path_d: str, factor: float) -> str:
         parts.append(f"{value:.3f}".rstrip("0").rstrip("."))
 
     return " ".join(parts)
-
-
-def sanitize_svg_fragment(svg_string: str) -> str:
-    """Strips executable elements (scripts, event handlers) from backend SVG outputs."""
-    if not svg_string:
-        return ""
-    # Strip <script...>...</script>
-    cleaned = re.sub(r"<script[^>]*>.*?</script>", "", svg_string, flags=re.DOTALL | re.IGNORECASE)
-    # Strip event attributes on*="..."
-    cleaned = re.sub(r"\s+on[a-z]+\s*=\s*([\"']).*?\1", "", cleaned, flags=re.IGNORECASE)
-    return cleaned

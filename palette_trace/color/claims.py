@@ -2,10 +2,11 @@
 Pixel claim matching and conflict resolution algorithms.
 """
 
-from typing import List, Dict, Optional
 import numpy as np
-from palette_trace.color.conversion import srgb_to_oklch, shortest_hue_distance
-from palette_trace.color.reach import get_tolerances_for_reach, calculate_hue_confidence
+
+from palette_trace.color.conversion import shortest_hue_distance, srgb_to_oklch
+from palette_trace.color.reach import calculate_hue_confidence, get_tolerances_for_reach
+
 
 class PinnedClaimEvaluator:
     """Evaluates whether source pixels fall within reach of pinned palette entries."""

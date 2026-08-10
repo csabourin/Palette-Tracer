@@ -121,19 +121,3 @@ def commit_generated_trace_group(
         parent.insert(list(parent).index(image_elem) + 1, new_group)
 
     return group_id
-
-
-def detect_manual_edits(svg_root, group_id: str, expected_settings_hash: str) -> bool:
-    """
-    Whether the generated group looks manually edited (§28, §34.26).
-
-    The recorded settings hash is compared against the group's own attribute.
-    A group whose attribute is missing or stale was either edited by hand or
-    produced by a different configuration, and replacing it would discard work.
-    """
-    group = find_generated_group(svg_root, group_id)
-    if group is None:
-        return False
-
-    stored = group.get(_pt("settings-hash"), "")
-    return bool(expected_settings_hash) and stored != expected_settings_hash

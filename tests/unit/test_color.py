@@ -2,20 +2,22 @@
 Unit tests for Color Engine (sRGB, OKLab, OKLCH, Reach, Claims, Quantizer).
 """
 
-import pytest
 import numpy as np
+import pytest
+
+from palette_trace.color.claims import PinnedClaimEvaluator
 from palette_trace.color.conversion import (
     hex_to_srgb,
+    oklab_to_srgb,
+    shortest_hue_distance,
+    srgb_array_to_oklch,
     srgb_to_hex,
     srgb_to_oklab,
-    oklab_to_srgb,
-    srgb_array_to_oklch,
     srgb_to_oklch,
-    shortest_hue_distance,
 )
-from palette_trace.color.reach import get_tolerances_for_reach, calculate_hue_confidence
-from palette_trace.color.claims import PinnedClaimEvaluator, resolve_claimed_pixels
 from palette_trace.color.quantizer import run_deterministic_quantization
+from palette_trace.color.reach import calculate_hue_confidence, get_tolerances_for_reach
+
 
 def test_hex_conversion():
     r, g, b = hex_to_srgb("#FF0000")

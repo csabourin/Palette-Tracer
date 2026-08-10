@@ -4,7 +4,9 @@ Implements exact formulas defined by Björn Ottosson (2020).
 """
 
 import math
+
 import numpy as np
+
 
 def hex_to_srgb(hex_str: str) -> tuple[float, float, float]:
     """Convert '#RRGGBB' to (r, g, b) floats in range [0, 1]."""
@@ -27,15 +29,13 @@ def srgb_to_linear(c: float) -> float:
     """sRGB gamma correction to linear RGB."""
     if c <= 0.04045:
         return c / 12.92
-    else:
-        return math.pow((c + 0.055) / 1.055, 2.4)
+    return math.pow((c + 0.055) / 1.055, 2.4)
 
 def linear_to_srgb(c: float) -> float:
     """Linear RGB to sRGB gamma correction."""
     if c <= 0.0031308:
         return max(0.0, min(1.0, 12.92 * c))
-    else:
-        return max(0.0, min(1.0, 1.055 * math.pow(max(0.0, c), 1.0 / 2.4) - 0.055))
+    return max(0.0, min(1.0, 1.055 * math.pow(max(0.0, c), 1.0 / 2.4) - 0.055))
 
 def srgb_to_oklab(r: float, g: float, b: float) -> tuple[float, float, float]:
     """Convert sRGB (0..1) to OKLab (L, a, b)."""

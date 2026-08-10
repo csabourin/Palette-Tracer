@@ -36,7 +36,7 @@ def load_settings(image_path) -> dict:
     """
     path = sidecar_path(image_path)
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             settings = json.load(handle)
     except (OSError, ValueError):
         return create_default_settings(str(uuid.uuid4()))

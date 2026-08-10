@@ -3,12 +3,12 @@ Local HTTP Server bound strictly to 127.0.0.1 on an ephemeral port.
 Serves static frontend assets and API endpoints.
 """
 
-import os
 import json
 import threading
 import webbrowser
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
 from palette_trace.server.api import handle_api_request
 
 WEB_DIR = Path(__file__).parent.parent / "web"
@@ -29,8 +29,10 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/"):
-            headers = {k: v for k, v in self.headers.items()}
-            status, res = handle_api_request(self.session, self.path.split("?")[0], "GET", {}, headers)
+            headers = dict(self.headers.items())
+            status, res = handle_api_request(
+                self.session, self.path.split("?")[0], "GET", {}, headers
+            )
             self._send_json(status, res)
         else:
             self._serve_static_file(self.path)
@@ -51,8 +53,10 @@ class PaletteTraceRequestHandler(BaseHTTPRequestHandler):
         raw_body = self.rfile.read(length) if length > 0 else b"{}"
         body = self._parse_body(raw_body)
 
-        headers = {k: v for k, v in self.headers.items()}
-        status, res = handle_api_request(self.session, self.path.split("?")[0], "POST", body, headers)
+        headers = dict(self.headers.items())
+        status, res = handle_api_request(
+            self.session, self.path.split("?")[0], "POST", body, headers
+        )
         self._send_json(status, res)
 
     def _parse_body(self, raw_body: bytes) -> dict:

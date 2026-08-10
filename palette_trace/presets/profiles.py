@@ -24,7 +24,7 @@ DEFAULT_PROFILE_ID = "default"
 def _load() -> dict:
     global _PROFILES
     if _PROFILES is None:
-        with open(_DATA_FILE, "r", encoding="utf-8") as handle:
+        with open(_DATA_FILE, encoding="utf-8") as handle:
             _PROFILES = json.load(handle)["profiles"]
     return _PROFILES
 
@@ -72,7 +72,10 @@ def resolve_entry_profile(entry: dict, global_profile: dict) -> dict:
     An unrecognised mode inherits, so that a future settings version widening
     this field degrades rather than fails.
     """
-    base = copy.deepcopy(global_profile) if global_profile else get_builtin_profile(DEFAULT_PROFILE_ID)
+    base = (
+        copy.deepcopy(global_profile) if global_profile
+        else get_builtin_profile(DEFAULT_PROFILE_ID)
+    )
     config = entry.get("traceProfile") or {}
     mode = config.get("mode", "inherit")
 

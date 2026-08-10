@@ -80,19 +80,6 @@ def large_donut(w: int = LARGE_SIZE, h: int = LARGE_SIZE) -> np.ndarray:
     return mask
 
 
-#: Fixtures evaluated by the conformance runner, in report order.
-ALL_FIXTURES = {
-    "solid_rectangle": solid_rectangle,
-    "donut": donut,
-    "plus": plus,
-    "circle": circle,
-    "single_pixel": single_pixel,
-    "sparse_noise": sparse_noise,
-    "diagonal_line": diagonal_line,
-    "large_donut": large_donut,
-}
-
-
 def as_request(mask: np.ndarray, profile: dict | None = None) -> TraceRequest:
     """Wraps a fixture mask in a TraceRequest."""
     h, w = mask.shape

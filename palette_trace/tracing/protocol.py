@@ -3,7 +3,8 @@ Mandatory Tracing Backend protocol and dataclasses as specified in Section 23.1.
 """
 
 from dataclasses import dataclass
-from typing import Protocol, Optional, Tuple, FrozenSet
+from typing import Protocol
+
 
 @dataclass(frozen=True)
 class BackendCapabilities:
@@ -15,7 +16,7 @@ class BackendCapabilities:
     supports_cancellation: bool
     deterministic: bool
 
-    supported_canonical_settings: FrozenSet[str]
+    supported_canonical_settings: frozenset[str]
 
 @dataclass(frozen=True)
 class TraceRequest:
@@ -23,13 +24,13 @@ class TraceRequest:
     height: int
     packed_binary_mask: bytes  # 1 byte per pixel or packed bitmask
     profile: dict
-    transform_hint: Optional[Tuple[float, float, float, float, float, float]] = None
+    transform_hint: tuple[float, float, float, float, float, float] | None = None
 
 @dataclass(frozen=True)
 class TraceResult:
-    svg_path_data: Tuple[str, ...]
+    svg_path_data: tuple[str, ...]
     fill_rule: str
-    warnings: Tuple[str, ...]
+    warnings: tuple[str, ...]
     statistics: dict
 
 class TraceBackend(Protocol):

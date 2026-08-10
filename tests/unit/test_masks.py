@@ -2,17 +2,17 @@
 Unit tests for Masks Representation & Cleanup (label_map, components, morphology, geometry).
 """
 
-import pytest
 import numpy as np
+
+from palette_trace.masks.components import fill_small_holes, remove_small_speckles
 from palette_trace.masks.label_map import LabelMap
-from palette_trace.masks.components import remove_small_speckles, fill_small_holes
 from palette_trace.masks.morphology import dilate_mask, erode_mask
-from palette_trace.masks.geometry_policy import apply_underlap_to_mask
 from palette_trace.presets.preview_scaling import (
     pixel_exponent,
     scale_profile,
     scale_value,
 )
+
 
 def test_label_map():
     lm = LabelMap(10, 10, ["e1", "e2"])
@@ -29,8 +29,8 @@ def test_speckle_removal():
     mask[4:8, 4:8] = True  # 16 px region
 
     cleaned = remove_small_speckles(mask, min_area_px2=4)
-    assert cleaned[1, 1] == False
-    assert cleaned[5, 5] == True
+    assert not cleaned[1, 1]
+    assert cleaned[5, 5]
 
 def test_hole_filling():
     mask = np.zeros((10, 10), dtype=bool)
@@ -38,14 +38,14 @@ def test_hole_filling():
     mask[4, 4] = False  # 1 px hole
 
     filled = fill_small_holes(mask, max_hole_area_px2=4)
-    assert filled[4, 4] == True
+    assert filled[4, 4]
 
 def test_morphology():
     mask = np.zeros((10, 10), dtype=bool)
     mask[4:6, 4:6] = True
 
     dilated = dilate_mask(mask, 1.0)
-    assert dilated[3, 4] == True
+    assert dilated[3, 4]
 
     eroded = erode_mask(dilated, 1.0)
     assert np.array_equal(eroded, mask)

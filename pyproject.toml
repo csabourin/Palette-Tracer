@@ -9,7 +9,10 @@ description = "Art-directed multicolour bitmap tracing, as an Inkscape extension
 readme = "README.md"
 authors = [{ name = "Christian Sabourin" }]
 license = { text = "GPL-3.0-or-later" }
-requires-python = ">=3.9"
+# 3.11 rather than 3.9: `color/conversion.py` calls `math.cbrt`, added in 3.11,
+# and the annotations throughout use PEP 604 unions, which are evaluated at
+# definition time and so need 3.10. The package does not import below this.
+requires-python = ">=3.11"
 
 # The headless core and the standalone host need only these. `potracer` is the
 # reference tracing backend selected by ADR-0001, so it is not optional.
@@ -40,6 +43,19 @@ palette-trace-web = "palette_trace.standalone:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "SIM", "C4", "RET", "PIE", "ERA"]
+
+[tool.ruff.lint.per-file-ignores]
+# `l`, `m` and `s` are the LMS cone responses the OKLab transform is defined
+# in terms of. The published notation is what makes this code checkable
+# against the reference; a less ambiguous name would be a less faithful one.
+"palette_trace/color/conversion.py" = ["E741"]
 
 [tool.setuptools.packages.find]
 include = ["palette_trace*"]

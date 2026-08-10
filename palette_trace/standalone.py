@@ -18,8 +18,8 @@ from pathlib import Path
 from PIL import Image
 
 from palette_trace import sidecar
-from palette_trace.image_source import DecodedImageSource
 from palette_trace.errors import ImageSourceError, PaletteTraceError
+from palette_trace.image_source import DecodedImageSource
 from palette_trace.pipeline.controller import PipelineController
 from palette_trace.presets.preview_scaling import (
     PREVIEW_BUDGET_PIXELS,

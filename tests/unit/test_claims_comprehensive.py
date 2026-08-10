@@ -9,11 +9,11 @@ Tests cover:
 - Edge cases at tolerance boundaries
 """
 
-import pytest
 import numpy as np
-from palette_trace.color.conversion import srgb_to_oklch, oklch_to_oklab
-from palette_trace.color.claims import PinnedClaimEvaluator, resolve_claimed_pixels
+import pytest
 
+from palette_trace.color.claims import PinnedClaimEvaluator, resolve_claimed_pixels
+from palette_trace.color.conversion import srgb_to_oklch
 
 # --------------------------------------------------------------------------- #
 #  Helper fixtures                                                            #
@@ -107,10 +107,10 @@ class TestToleranceBoundaries:
 
         # Red anchor — test a slightly shifted pixel still within tolerance
         L, C, h = srgb_to_oklch(1.0, 0.0, 0.0)
-        
+
         # Add small delta to lightness (within reach=25 tolerance of 0.060)
         L_shifted = L + 0.05
-        
+
         eligible, score = ev.evaluate_pixel(L_shifted, C, h)
         assert eligible is True
         assert score <= 1.0
@@ -121,10 +121,10 @@ class TestToleranceBoundaries:
         ev = PinnedClaimEvaluator(entry, 0)
 
         L, C, h = srgb_to_oklch(1.0, 0.0, 0.0)
-        
+
         # Exceed lightness tolerance (reach=25 → tol_L=0.060)
         L_exceeded = L + 0.07
-        
+
         eligible, score = ev.evaluate_pixel(L_exceeded, C, h)
         assert eligible is False
 
@@ -197,7 +197,7 @@ class TestIndependentChannelMode:
 
         L, C, h = srgb_to_oklch(1.0, 0.0, 0.0)
         eligible, score = ev.evaluate_pixel(L, C, h)
-        
+
         assert eligible is True
         assert pytest.approx(score, abs=1e-4) == 0.0
 
@@ -211,7 +211,7 @@ class TestDeterminism:
         oklch_img = np.full((8, 8, 3), [L_r, C_r, h_r], dtype=np.float64)
 
         entries = [make_pinned_entry("red", "#FF0000", reach=50)]
-        
+
         claims1, stats1 = resolve_claimed_pixels(oklch_img, entries)
         claims2, stats2 = resolve_claimed_pixels(oklch_img, entries)
 

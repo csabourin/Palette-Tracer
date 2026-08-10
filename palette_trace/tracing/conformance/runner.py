@@ -21,8 +21,8 @@ import json
 import re
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 from palette_trace.tracing.conformance import fixtures
 from palette_trace.tracing.protocol import TraceBackend, TraceResult
@@ -98,7 +98,7 @@ class ConformanceReport:
     backend_id: str
     version: str
     checks: list = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
 
     def _by_tier(self, tier: str):
         return [c for c in self.checks if c.tier == tier]
@@ -280,7 +280,7 @@ def run_conformance_suite(backend: TraceBackend) -> ConformanceReport:
     return report
 
 
-def evaluate_all(registry: Optional[BackendRegistry] = None) -> list:
+def evaluate_all(registry: BackendRegistry | None = None) -> list:
     """Runs the suite against every discovered backend."""
     registry = registry or BackendRegistry()
     reports = []

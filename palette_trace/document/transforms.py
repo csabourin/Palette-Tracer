@@ -4,6 +4,7 @@ Coordinate transformations from intrinsic source-pixel space to SVG document vie
 
 import inkex
 
+
 def get_image_to_document_transform(
     image_elem: inkex.Image,
     intrinsic_w: int,

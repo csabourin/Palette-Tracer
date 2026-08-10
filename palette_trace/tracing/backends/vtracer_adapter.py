@@ -2,26 +2,31 @@
 VTracer backend adapter.
 """
 
+import importlib.util
+import os
 import re
+import tempfile
+
 import numpy as np
+from PIL import Image
+
+from palette_trace.tracing.normalization import normalize_svg_path_data
 from palette_trace.tracing.protocol import (
-    TraceBackend,
     BackendCapabilities,
+    TraceBackend,
     TraceRequest,
     TraceResult,
 )
-from palette_trace.tracing.normalization import normalize_svg_path_data
+
 
 class VTracerAdapter(TraceBackend):
     """Adapter for VTracer engine."""
 
     def __init__(self):
-        self._has_module = False
-        try:
-            import vtracer
-            self._has_module = True
-        except ImportError:
-            pass
+        # Probed rather than imported: the registry constructs every adapter to
+        # ask what is available, and loading a compiled engine to answer that
+        # would cost the load even when another backend ends up being used.
+        self._has_module = importlib.util.find_spec("vtracer") is not None
 
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
@@ -49,10 +54,9 @@ class VTracerAdapter(TraceBackend):
         if not self._has_module:
             raise RuntimeError("VTracer module is not available.")
 
+        # Deferred: an optional dependency, and `_has_module` above is what
+        # decides whether this line is ever reached.
         import vtracer
-        import tempfile
-        import os
-        from PIL import Image
 
         mask_arr = np.frombuffer(request.packed_binary_mask, dtype=np.uint8).reshape(
             (request.height, request.width)
@@ -74,7 +78,7 @@ class VTracerAdapter(TraceBackend):
 
         try:
             vtracer.convert_image_to_svg_py(in_path, out_path)
-            with open(out_path, "r", encoding="utf-8") as f_svg:
+            with open(out_path, encoding="utf-8") as f_svg:
                 svg_str = f_svg.read()
         finally:
             if os.path.exists(in_path):

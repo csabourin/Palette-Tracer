@@ -2,8 +2,8 @@
 REST API handlers for Palette Trace local web interface.
 """
 
-import io
 import base64
+import io
 import uuid
 from urllib.parse import unquote
 
@@ -45,7 +45,6 @@ from palette_trace.settings import (
     reset_settings_to_destination_defaults,
 )
 from palette_trace.svg_writer import build_svg_document
-
 
 #: Picker sample sizes (§9.3). The 5×5 median is the default; exact-pixel
 #: sampling MUST be available; a larger dominant-colour sample MAY be offered.
@@ -356,7 +355,9 @@ _REQUIRES_IMAGE = frozenset({
 })
 
 
-def handle_api_request(session, path: str, method: str, body: dict, headers: dict) -> tuple[int, dict]:
+def handle_api_request(
+    session, path: str, method: str, body: dict, headers: dict
+) -> tuple[int, dict]:
     """
     Dispatches HTTP API requests for the Web UI.
     Returns (status_code, response_json_dict).
@@ -386,7 +387,7 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
     if path == "/api/session" and method == "GET":
         return (200, _session_state(session))
 
-    elif path == "/api/load_image" and method == "POST":
+    if path == "/api/load_image" and method == "POST":
         # §9.4.2: the browser is the only image chooser. There is deliberately
         # no endpoint that lists or reads arbitrary local paths (§9.1) — the
         # bytes come up in the request body and are decoded in memory.
@@ -417,7 +418,9 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         # that was already chosen rather than from whatever the last image left
         # behind (§27's "start from destination defaults", applied implicitly
         # because there is no prior configuration for *this* image to recover).
-        previous_destination = (session.settings or {}).get("destination", {}).get("id", "illustration")
+        previous_destination = (
+            (session.settings or {}).get("destination", {}).get("id", "illustration")
+        )
         session.settings = reset_settings_to_destination_defaults(
             str(uuid.uuid4()), previous_destination
         )
@@ -448,7 +451,7 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
             response["dataUri"] = _source_preview_data_uri(session)
         return (200, response)
 
-    elif path == "/api/nearest_source_color" and method == "POST":
+    if path == "/api/nearest_source_color" and method == "POST":
         try:
             red, green, blue = hex_to_srgb(str(body.get("hex", "")))
         except ValueError:
@@ -459,7 +462,7 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
             "hex": srgb_to_hex(red, green, blue), "r": red, "g": green, "b": blue,
         })
 
-    elif path == "/api/export" and method == "POST":
+    if path == "/api/export" and method == "POST":
         # Deliberately does not end the session: a download is a checkpoint,
         # not a commitment, and the user may well adjust and download again.
         return (200, {
@@ -467,7 +470,7 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
             "fileName": _download_name(session),
         })
 
-    elif path == "/api/sample_color" and method == "POST":
+    if path == "/api/sample_color" and method == "POST":
         x = int(body.get("x", 0))
         y = int(body.get("y", 0))
         mode = body.get("mode", SAMPLE_MEDIAN_5X5)
@@ -484,26 +487,26 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         r, g, b = sample_source_color(session.image_source.srgb, x, y, mode)
         return (200, {"hex": srgb_to_hex(r, g, b), "r": r, "g": g, "b": b, "mode": mode})
 
-    elif path == "/api/update_settings" and method == "POST":
+    if path == "/api/update_settings" and method == "POST":
         session.settings = body.get("settings", {})
         return (200, _settings_response(session))
 
-    elif path == "/api/preview_source" and method == "GET":
+    if path == "/api/preview_source" and method == "GET":
         return (200, {"dataUri": _source_preview_data_uri(session)})
 
-    elif path == "/api/destination_presets" and method == "GET":
+    if path == "/api/destination_presets" and method == "GET":
         ids = list_destination_ids()
         return (200, {
             "order": ids,
             "presets": {dest_id: get_destination_preset(dest_id) for dest_id in ids},
         })
 
-    elif path == "/api/apply_destination" and method == "POST":
+    if path == "/api/apply_destination" and method == "POST":
         dest_id = body.get("destinationId", "")
         apply_destination_preset(session.settings, dest_id)
         return (200, _settings_response(session))
 
-    elif path == "/api/reset_destination_defaults" and method == "POST":
+    if path == "/api/reset_destination_defaults" and method == "POST":
         # §9.2 "Reset to destination defaults": re-apply the *current*
         # destination's technical defaults, discarding manual geometry or
         # trace-profile tweaks made since (§19). Palette entries survive.
@@ -511,14 +514,14 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         apply_destination_preset(session.settings, current_id)
         return (200, _settings_response(session))
 
-    elif path == "/api/trace_profiles" and method == "GET":
+    if path == "/api/trace_profiles" and method == "GET":
         ids = list_profile_ids()
         return (200, {
             "order": ids,
             "profiles": {profile_id: get_builtin_profile(profile_id) for profile_id in ids},
         })
 
-    elif path == "/api/resolve_source_change" and method == "POST":
+    if path == "/api/resolve_source_change" and method == "POST":
         # §27: the four recovery choices offered when the recorded source
         # fingerprint no longer matches the decoded bitmap.
         action = body.get("action", "recalculate")
@@ -539,10 +542,10 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         session.source_changed = False
         return (200, _settings_response(session))
 
-    elif path == "/api/user_presets" and method == "GET":
+    if path == "/api/user_presets" and method == "GET":
         return (200, {"presets": list_user_presets()})
 
-    elif path == "/api/user_presets" and method == "POST":
+    if path == "/api/user_presets" and method == "POST":
         name = (body.get("name") or "").strip()
         if not name:
             return (400, {"error": "A preset name is required."})
@@ -553,14 +556,14 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         preset = save_user_preset(name, description, session.settings, scope)
         return (200, {"preset": preset, "presets": list_user_presets()})
 
-    elif path == "/api/user_presets/delete" and method == "POST":
+    if path == "/api/user_presets/delete" and method == "POST":
         preset_uuid = body.get("presetUuid", "")
         deleted = delete_user_preset(preset_uuid)
         if not deleted:
             return (404, {"error": "No such preset."})
         return (200, {"status": "deleted", "presets": list_user_presets()})
 
-    elif path == "/api/user_presets/apply" and method == "POST":
+    if path == "/api/user_presets/apply" and method == "POST":
         preset_uuid = body.get("presetUuid", "")
         preset = load_user_preset(preset_uuid)
         if not preset:
@@ -568,7 +571,7 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         apply_configuration_patch(session.settings, preset.get("configurationPatch", {}))
         return (200, _settings_response(session))
 
-    elif path == "/api/apply" and method == "POST":
+    if path == "/api/apply" and method == "POST":
         # Both hosts commit `session.pipeline_output` directly — into the open
         # Inkscape document, or into the configured SVG file. After a settings
         # change that output is a preview (§17.4), so it is re-traced at full
@@ -585,7 +588,7 @@ def _dispatch(session, path: str, method: str, body: dict, headers: dict) -> tup
         session.is_applied = True
         return (200, {"status": "applied"})
 
-    elif path == "/api/cancel" and method == "POST":
+    if path == "/api/cancel" and method == "POST":
         session.is_cancelled = True
         return (200, {"status": "cancelled"})
 

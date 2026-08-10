@@ -9,10 +9,9 @@ Tests verify:
 """
 
 import pytest
-import numpy as np
-from palette_trace.color.quantizer import run_deterministic_quantization
-from palette_trace.color.conversion import srgb_to_oklab
 
+from palette_trace.color.conversion import srgb_to_oklab
+from palette_trace.color.quantizer import run_deterministic_quantization
 
 # --------------------------------------------------------------------------- #
 #  Helper fixtures                                                            #
@@ -94,7 +93,7 @@ class TestFixedCenters:
 
     def test_fixed_centers_preserved(self):
         red_oklab = srgb_to_oklab(1.0, 0.0, 0.0)
-        
+
         hist = [
             make_histogram_entry(0.95, 0.05, 0.05, 100),
             make_histogram_entry(0.8, 0.2, 0.1, 60),
@@ -135,7 +134,7 @@ class TestEdgeCases:
     def test_single_bin(self):
         hist = [make_histogram_entry(0.5, 0.3, 0.2, 100)]
         result = run_deterministic_quantization(hist, target_count=1)
-        
+
         assert len(result) == 1
         # Should be close to the input colour
         from palette_trace.color.conversion import hex_to_srgb
@@ -150,7 +149,7 @@ class TestEdgeCases:
             make_histogram_entry(0.5, 0.3, 0.2, 100),
             make_histogram_entry(0.8, 0.1, 0.1, 60),
         ]
-        
+
         result = run_deterministic_quantization(hist, target_count=10)
         # Should produce ≤ len(hist) centres
         assert len(result) <= len(hist)
@@ -159,7 +158,7 @@ class TestEdgeCases:
         """Single bin + fixed centers should still work."""
         red_oklab = srgb_to_oklab(1.0, 0.0, 0.0)
         hist = [make_histogram_entry(0.5, 0.3, 0.2, 100)]
-        
+
         result = run_deterministic_quantization(
             hist,
             target_count=1,

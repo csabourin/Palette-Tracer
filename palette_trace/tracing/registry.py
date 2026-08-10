@@ -1,15 +1,12 @@
 """
-Tracing Backend Discovery and Registry Manager.
+Tracing backend discovery and registry (SPEC §23).
 """
 
-from typing import Dict, Optional, List
-from palette_trace.tracing.protocol import TraceBackend
-from palette_trace.tracing.backends.potrace_adapter import PotraceAdapter
-from palette_trace.tracing.backends.vtracer_adapter import VTracerAdapter
-from palette_trace.tracing.backends.python_contour_adapter import PythonContourAdapter
-from palette_trace.tracing.backends.autotrace_adapter import AutoTraceAdapter
-from palette_trace.tracing.backends.inkscape_cli_adapter import InkscapeCliAdapter
 from palette_trace.errors import BackendNotFoundError
+from palette_trace.tracing.backends.potrace_adapter import PotraceAdapter
+from palette_trace.tracing.backends.python_contour_adapter import PythonContourAdapter
+from palette_trace.tracing.backends.vtracer_adapter import VTracerAdapter
+from palette_trace.tracing.protocol import TraceBackend
 
 #: Reference backend selected by the Phase 0 engine spike (§23.6).
 #: See docs/decisions/ADR-0001-reference-tracing-backend.md for the measured
@@ -19,7 +16,14 @@ REFERENCE_BACKEND_ID = "potrace"
 
 #: Automatic-selection order (§23.3). Portable Python bindings come before
 #: compiled-wheel engines, which come before the correctness-only fallback.
-BACKEND_PRIORITY = ("potrace", "vtracer", "autotrace", "inkscape_cli", "python_contour")
+BACKEND_PRIORITY = ("potrace", "vtracer", "python_contour")
+
+#: Every adapter the registry knows how to construct, in no particular order —
+#: `BACKEND_PRIORITY` decides what "auto" resolves to. An adapter belongs here
+#: only once it can actually trace: one that reports itself available and then
+#: returns no geometry is worse than one that is absent, because the pipeline
+#: has no way to tell an empty scan from an empty mask.
+_ADAPTERS = (PotraceAdapter, VTracerAdapter, PythonContourAdapter)
 
 
 class BackendRegistry:
@@ -27,29 +31,10 @@ class BackendRegistry:
 
     def __init__(self):
         self._backends: dict[str, TraceBackend] = {}
-        self._register_default_backends()
-
-    def _register_default_backends(self):
-        # Register available adapters
-        potrace = PotraceAdapter()
-        if potrace.is_available():
-            self._backends["potrace"] = potrace
-
-        vtracer = VTracerAdapter()
-        if vtracer.is_available():
-            self._backends["vtracer"] = vtracer
-
-        py_contour = PythonContourAdapter()
-        if py_contour.is_available():
-            self._backends["python_contour"] = py_contour
-
-        autotrace = AutoTraceAdapter()
-        if autotrace.is_available():
-            self._backends["autotrace"] = autotrace
-
-        ink_cli = InkscapeCliAdapter()
-        if ink_cli.is_available():
-            self._backends["inkscape_cli"] = ink_cli
+        for adapter_class in _ADAPTERS:
+            adapter = adapter_class()
+            if adapter.is_available():
+                self._backends[adapter.capabilities().backend_id] = adapter
 
     def get_backend(self, preferred_id: str = "auto") -> TraceBackend:
         """Returns requested or best available backend adapter."""
@@ -68,8 +53,8 @@ class BackendRegistry:
     def list_available_backends(self) -> list[dict]:
         """Returns metadata list of available backends."""
         info = []
-        for bid, b in self._backends.items():
-            caps = b.capabilities()
+        for backend in self._backends.values():
+            caps = backend.capabilities()
             info.append({
                 "id": caps.backend_id,
                 "version": caps.version,
