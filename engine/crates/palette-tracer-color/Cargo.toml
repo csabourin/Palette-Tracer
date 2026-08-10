@@ -1,0 +1,19 @@
+[package]
+name = "palette-tracer-color"
+description = "Colour spaces, palettes, reaches and memory-bounded assignment for the Palette Tracer Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+palette-tracer-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
