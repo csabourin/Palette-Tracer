@@ -229,13 +229,13 @@ def launch_palette_trace_app(
         # of what the socket is doing: it reads as "loopback only, not reachable
         # from outside" at the exact moment the operator is trying to find out
         # whether their host is publishing it.
-        print(f"Palette Trace is listening on every interface, port {bound_port}.")
-        print("Open the address your host publishes for that port. No token is")
-        print("needed in the address: a request without one is redirected to an")
-        print("authenticated page.")
-        print(f"On this machine that is http://127.0.0.1:{bound_port}{path}")
+        print(f"Palette Trace is listening on every interface, port {bound_port}.", flush=True)
+        print("Open the address your host publishes for that port. No token is", flush=True)
+        print("needed in the address: a request without one is redirected to an", flush=True)
+        print("authenticated page.", flush=True)
+        print(f"On this machine that is http://127.0.0.1:{bound_port}{path}", flush=True)
     else:
-        print(f"Palette Trace interface: http://{host}:{bound_port}{path}")
+        print(f"Palette Trace interface: http://{host}:{bound_port}{path}", flush=True)
 
     # Serve until Apply or Cancel. The loop runs on its own thread and this one
     # waits for the session to reach a terminal state, rather than checking the

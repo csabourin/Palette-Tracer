@@ -119,7 +119,7 @@ def main(argv=None) -> int:
 
     image_path = args.image.expanduser()
     if not image_path.is_file():
-        print(f"error: no such file: {image_path}", file=sys.stderr)
+        print(f"error: no such file: {image_path}", file=sys.stderr, flush=True)
         return 2
 
     if image_path.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -127,6 +127,7 @@ def main(argv=None) -> int:
             f"warning: {image_path.suffix or 'this file'} is not a recognised bitmap "
             "format; attempting to decode anyway.",
             file=sys.stderr,
+            flush=True,
         )
 
     output_path = (args.output or default_output_path(image_path)).expanduser()
@@ -142,7 +143,7 @@ def main(argv=None) -> int:
     try:
         source = load_source(image_path)
     except PaletteTraceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr, flush=True)
         return 1
 
     settings = (
@@ -179,20 +180,21 @@ def main(argv=None) -> int:
         session.pipeline_output = session.controller.run_pipeline()
         session.pipeline_output_is_preview = session.controller.is_preview
     except PaletteTraceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr, flush=True)
         return 1
 
     if session.source_changed:
         print(
             "note: the source bitmap has changed since these settings were last applied.",
             file=sys.stderr,
+            flush=True,
         )
 
     host, port = _default_host_and_port(args)
     if not launch_palette_trace_app(
         session, open_browser=not args.no_browser, host=host, port=port
     ):
-        print("Cancelled. Nothing was written.")
+        print("Cancelled. Nothing was written.", flush=True)
         return 0
 
     if not session.can_write_to_disk:
@@ -200,10 +202,14 @@ def main(argv=None) -> int:
         # browser. Its result was delivered as a download, and the path given
         # on the command line names a different image — writing there would
         # overwrite an unrelated file's output.
-        print("Finished. The result was downloaded through the browser.")
+        print("Finished. The result was downloaded through the browser.", flush=True)
         return 0
 
-    return commit(session, image_path, output_path)
+    try:
+        return commit(session, image_path, output_path)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr, flush=True)
+        return 1
 
 
 def run_without_source(args) -> int:
@@ -223,9 +229,9 @@ def run_without_source(args) -> int:
     )
 
     if session.is_cancelled:
-        print("Cancelled. Nothing was written.")
+        print("Cancelled. Nothing was written.", flush=True)
     else:
-        print("Finished. Any result was downloaded through the browser.")
+        print("Finished. Any result was downloaded through the browser.", flush=True)
     return 0
 
 
@@ -233,7 +239,7 @@ def commit(session: AppSession, image_path: Path, output_path: Path) -> int:
     """Writes the SVG and the sidecar after the user applies."""
     output = session.pipeline_output
     if not output:
-        print("error: nothing to write.", file=sys.stderr)
+        print("error: nothing to write.", file=sys.stderr, flush=True)
         return 1
 
     settings = session.settings
@@ -266,8 +272,8 @@ def commit(session: AppSession, image_path: Path, output_path: Path) -> int:
     sidecar.save_settings(image_path, settings)
 
     scan_count = sum(1 for s in output["scan_results"] if s.get("pathDatas"))
-    print(f"Wrote {output_path} ({scan_count} scan(s), backend {backend.get('id', '?')}).")
-    print(f"Settings saved to {sidecar.sidecar_path(image_path)}.")
+    print(f"Wrote {output_path} ({scan_count} scan(s), backend {backend.get('id', '?')}).", flush=True)
+    print(f"Settings saved to {sidecar.sidecar_path(image_path)}.", flush=True)
     return 0
 
 

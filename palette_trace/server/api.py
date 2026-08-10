@@ -4,6 +4,7 @@ REST API handlers for Palette Trace local web interface.
 
 import base64
 import io
+import sys
 import uuid
 from urllib.parse import unquote
 
@@ -210,8 +211,21 @@ def _run_pipeline(session, preview: bool = False) -> dict:
     session.controller = None
     session.pipeline_output = None
 
+    if not preview:
+        src = session.image_source
+        print(
+            f"Palette Trace: running full-resolution pipeline "
+            f"({src.intrinsic_width}\u00d7{src.intrinsic_height})\u2026",
+            file=sys.stderr,
+            flush=True,
+        )
+
     session.controller = PipelineController(session.image_source, session.settings, scale)
     output = session.controller.run_pipeline()
+
+    if not preview:
+        print("Palette Trace: full-resolution pipeline done.", file=sys.stderr, flush=True)
+
     output["previewScale"] = session.controller.effective_scale
     session.pipeline_output = output
     session.pipeline_output_is_preview = session.controller.is_preview
