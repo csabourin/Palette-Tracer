@@ -165,7 +165,10 @@ impl<'a> Labels<'a> {
     /// Label of pixel `(x, y)` in *signed* coordinates, or the exterior.
     #[must_use]
     pub fn at(&self, x: i64, y: i64) -> LabelId {
-        if x < 0 || y < 0 || x >= i64::from(self.plane.width()) || y >= i64::from(self.plane.height())
+        if x < 0
+            || y < 0
+            || x >= i64::from(self.plane.width())
+            || y >= i64::from(self.plane.height())
         {
             Self::EXTERIOR
         } else {
@@ -222,7 +225,12 @@ impl<'a> Labels<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
 
@@ -252,12 +260,10 @@ mod tests {
         let p = plane(&[10, 11, 12, 13], 2, 2);
         let labels = Labels::new(&p);
         let centre = GridPoint::new(1, 1);
-        assert_eq!(labels.around(centre), [
-            LabelId(10),
-            LabelId(11),
-            LabelId(12),
-            LabelId(13)
-        ]);
+        assert_eq!(
+            labels.around(centre),
+            [LabelId(10), LabelId(11), LabelId(12), LabelId(13)]
+        );
 
         // Going east from the centre: north-east is on the left.
         assert_eq!(

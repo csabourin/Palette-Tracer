@@ -179,10 +179,23 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "palette-tracer"
 version = "0.1.0"
+dependencies = [
+ "palette-tracer-color",
+ "palette-tracer-core",
+ "palette-tracer-segment",
+ "palette-tracer-svg",
+ "palette-tracer-topology",
+ "proptest",
+]
 
 [[package]]
 name = "palette-tracer-cli"
 version = "0.1.0"
+dependencies = [
+ "palette-tracer",
+ "palette-tracer-core",
+ "serde_json",
+]
 
 [[package]]
 name = "palette-tracer-color"
@@ -219,6 +232,10 @@ dependencies = [
 [[package]]
 name = "palette-tracer-svg"
 version = "0.1.0"
+dependencies = [
+ "palette-tracer-core",
+ "proptest",
+]
 
 [[package]]
 name = "palette-tracer-topology"
@@ -232,6 +249,10 @@ dependencies = [
 [[package]]
 name = "palette-tracer-wasm"
 version = "0.1.0"
+dependencies = [
+ "palette-tracer",
+ "palette-tracer-core",
+]
 
 [[package]]
 name = "ppv-lite86"

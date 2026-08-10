@@ -208,7 +208,12 @@ pub fn canonical_pair<T: Ord>(a: T, b: T) -> (T, T) {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
@@ -277,7 +282,10 @@ mod tests {
         let mut g = Generation::default();
         let recorded = g;
         g.bump();
-        assert_ne!(recorded, g, "a bumped generation must not match a stale one");
+        assert_ne!(
+            recorded, g,
+            "a bumped generation must not match a stale one"
+        );
     }
 
     #[test]

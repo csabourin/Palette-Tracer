@@ -336,12 +336,20 @@ impl Topology {
     /// Total control points across all chains (§26.7).
     #[must_use]
     pub fn control_point_count(&self) -> u32 {
-        self.chains.iter().map(CurveChain::control_point_count).sum()
+        self.chains
+            .iter()
+            .map(CurveChain::control_point_count)
+            .sum()
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::ir::geom::Point;
@@ -368,11 +376,8 @@ mod tests {
         for i in 0..4u32 {
             let next_corner = (i + 1) % 4;
             t.chains.push(
-                CurveChain::polyline(&[
-                    corners[i as usize],
-                    corners[next_corner as usize],
-                ])
-                .unwrap(),
+                CurveChain::polyline(&[corners[i as usize], corners[next_corner as usize]])
+                    .unwrap(),
             );
             t.edges.push(SharedEdge {
                 id: EdgeId(i),

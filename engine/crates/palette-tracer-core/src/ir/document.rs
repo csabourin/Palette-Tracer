@@ -230,11 +230,16 @@ impl VectorDocument {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
-    use super::*;
     use super::super::geom::Point;
     use super::super::paint::Color;
+    use super::*;
 
     fn face(x: f64) -> Element {
         Element::FilledFace(FilledFace {

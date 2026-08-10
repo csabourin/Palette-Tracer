@@ -119,7 +119,8 @@ impl PaletteEntry {
         // separated by that angle.
         let d_h = hue_difference(sample.h, self.anchor_lch.h);
         let chord = 2.0 * (sample.c * self.anchor_lch.c).max(0.0).sqrt() * (d_h / 2.0).sin();
-        let term_h = WEIGHT_HUE * hue_weight(sample.c, self.anchor_lch.c, neutral_chroma_threshold)
+        let term_h = WEIGHT_HUE
+            * hue_weight(sample.c, self.anchor_lch.c, neutral_chroma_threshold)
             * (chord / r_h).powi(2);
 
         term_l + term_c + term_h
@@ -421,14 +422,12 @@ pub fn assign(
                             .to_straight(epsilon)
                             .unwrap_or(crate::spaces::LinearRgb::BLACK);
                         let lch = straight.to_oklab().to_oklch();
-                        let m = palette
-                            .best_match(lch, threshold)
-                            .unwrap_or(Match {
-                                label: LabelId::ZERO,
-                                entry_id: 0,
-                                score: f64::MAX,
-                                claimed: false,
-                            });
+                        let m = palette.best_match(lch, threshold).unwrap_or(Match {
+                            label: LabelId::ZERO,
+                            entry_id: 0,
+                            score: f64::MAX,
+                            claimed: false,
+                        });
                         if m.claimed {
                             claimed += 1;
                         } else {
@@ -469,7 +468,10 @@ pub fn assign_one(palette: &Palette, sample: PremulLinearRgba, color: &Effective
         .to_straight(epsilon)
         .unwrap_or(crate::spaces::LinearRgb::BLACK);
     palette
-        .best_match(straight.to_oklab().to_oklch(), color.neutral_chroma_threshold)
+        .best_match(
+            straight.to_oklab().to_oklch(),
+            color.neutral_chroma_threshold,
+        )
         .unwrap_or(Match {
             label: LabelId::ZERO,
             entry_id: 0,
@@ -479,7 +481,12 @@ pub fn assign_one(palette: &Palette, sample: PremulLinearRgba, color: &Effective
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use palette_tracer_core::config::{Profile, TraceConfig};
@@ -533,7 +540,10 @@ mod tests {
         assert_eq!(hue_weight(0.0, 0.1, 0.02), 0.0);
         assert_eq!(hue_weight(0.1, 0.1, 0.02), 1.0);
         let mid = hue_weight(0.01, 0.1, 0.02);
-        assert!(mid > 0.0 && mid < 1.0, "the transition must be gradual: {mid}");
+        assert!(
+            mid > 0.0 && mid < 1.0,
+            "the transition must be gradual: {mid}"
+        );
     }
 
     /// The smoothstep has zero derivative at both ends, so no small change in
@@ -568,7 +578,10 @@ mod tests {
         // Reversing the array must not change the answer.
         let reversed = Palette::from_entries(vec![high, low]);
         assert_eq!(
-            reversed.best_match(lch([100, 100, 100]), 0.02).unwrap().entry_id,
+            reversed
+                .best_match(lch([100, 100, 100]), 0.02)
+                .unwrap()
+                .entry_id,
             2
         );
 
@@ -576,7 +589,13 @@ mod tests {
         let a = entry(7, [100, 100, 100]);
         let b = entry(3, [100, 100, 100]);
         let palette = Palette::from_entries(vec![a, b]);
-        assert_eq!(palette.best_match(lch([100, 100, 100]), 0.02).unwrap().entry_id, 3);
+        assert_eq!(
+            palette
+                .best_match(lch([100, 100, 100]), 0.02)
+                .unwrap()
+                .entry_id,
+            3
+        );
     }
 
     /// PTE-COLOR-013: two inks with the same visible colour stay distinct.
@@ -659,8 +678,22 @@ mod tests {
 
         let data = two_colour_image();
         let view = checkerboard_view(&data);
-        let a = assign(&view, &palette, &color, &WorkBudget::unbounded(), &NoControl).unwrap();
-        let b = assign(&view, &palette, &color, &WorkBudget::unbounded(), &NoControl).unwrap();
+        let a = assign(
+            &view,
+            &palette,
+            &color,
+            &WorkBudget::unbounded(),
+            &NoControl,
+        )
+        .unwrap();
+        let b = assign(
+            &view,
+            &palette,
+            &color,
+            &WorkBudget::unbounded(),
+            &NoControl,
+        )
+        .unwrap();
         assert_eq!(a.labels, b.labels);
 
         // Same two colours, different spatial layout: every red pixel must
@@ -748,7 +781,16 @@ mod tests {
         let small = Palette::from_entries(vec![entry(0, [220, 30, 40])]);
         let big = Palette::from_entries(
             (0..200u32)
-                .map(|i| entry(i, [(i * 7 % 256) as u8, (i * 13 % 256) as u8, (i * 3 % 256) as u8]))
+                .map(|i| {
+                    entry(
+                        i,
+                        [
+                            (i * 7 % 256) as u8,
+                            (i * 13 % 256) as u8,
+                            (i * 3 % 256) as u8,
+                        ],
+                    )
+                })
                 .collect(),
         );
 

@@ -19,8 +19,8 @@ use super::policy::{
 use super::profile::{Modifier, Profile};
 use crate::limits::ResourceLimits;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 /// Where an effective value came from (§G.1).
@@ -160,6 +160,15 @@ pub struct EffectivePalette {
     pub entries: Vec<EffectivePaletteEntry>,
     /// Target entry count for automatic palettes.
     pub max_colors: u32,
+    /// Reach applied to entries that declared none, and to every entry an
+    /// automatic palette generates.
+    ///
+    /// Recorded here rather than consumed silently during generation: it
+    /// materially changes which pixels each entry claims, so PTE-API-009
+    /// requires it in the effective config, Appendix F requires it in the
+    /// digest, and Appendix E.1 requires a change to it to invalidate the
+    /// analysis.
+    pub default_reach: ReachSpec,
 }
 
 /// Resolved colour settings.

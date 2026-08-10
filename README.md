@@ -13,6 +13,23 @@ Both hosts drive the same headless core, so results are identical.
 
 `SPEC.md` is the authoritative implementation contract. `docs/IMPLEMENTATION_STATUS.md` records what is actually built and verified.
 
+## Palette Tracer Engine (`engine/`)
+
+`engine/` holds a second-generation tracing engine written in Rust to
+`engine/SPEC.md`. Where this application's backend traces one binary mask per
+colour, the engine builds one raster partition and one shared boundary graph, so
+adjacent fills cannot drift apart or leave a seam.
+
+It is early and it is not wired into the Python pipeline. Read
+`engine/docs/IMPLEMENTATION_STATUS.md` before forming an expectation -- curve
+fitting, strokes and gradients are not built yet. The engine is licensed
+`MIT OR Apache-2.0`; the rest of this repository remains GPL-3.0-or-later.
+
+```bash
+make engine-test    # 292 tests
+make engine-trace   # trace examples/sample.png end to end
+```
+
 ## Status
 
 Pre-release, under active development. See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for the current per-requirement state, and [.ai/HANDOFF.md](.ai/HANDOFF.md) for the current working slice.

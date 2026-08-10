@@ -330,7 +330,12 @@ fn cbrt(x: f64) -> f64 {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
@@ -341,10 +346,7 @@ mod tests {
         for i in 0..=255u16 {
             let c = f64::from(i) / 255.0;
             let back = linear_to_srgb(srgb_to_linear(c));
-            assert!(
-                (back - c).abs() < 1e-12,
-                "{c} round-tripped to {back}"
-            );
+            assert!((back - c).abs() < 1e-12, "{c} round-tripped to {back}");
         }
     }
 
@@ -362,8 +364,14 @@ mod tests {
         let below = srgb_to_linear(0.040_45 - 1e-12);
         let above = srgb_to_linear(0.040_45 + 1e-12);
         let gap = (below - above).abs();
-        assert!(gap < 1e-8, "gap of {gap} between branches: {below} vs {above}");
-        assert!(gap < 1.0 / 255.0 / 1000.0, "the gap must stay far below one code point");
+        assert!(
+            gap < 1e-8,
+            "gap of {gap} between branches: {below} vs {above}"
+        );
+        assert!(
+            gap < 1.0 / 255.0 / 1000.0,
+            "the gap must stay far below one code point"
+        );
     }
 
     /// §25.4 "Color" row: OKLab reference vectors. PTE-COLOR-004 requires the
@@ -378,9 +386,18 @@ mod tests {
     fn reference_vectors_match_published_values() {
         let cases: [(LinearRgb, [f64; 3]); 4] = [
             (LinearRgb::new(1.0, 1.0, 1.0), [1.0, 0.0, 0.0]),
-            (LinearRgb::new(1.0, 0.0, 0.0), [0.627_955, 0.224_863, 0.125_846]),
-            (LinearRgb::new(0.0, 1.0, 0.0), [0.866_440, -0.233_888, 0.179_498]),
-            (LinearRgb::new(0.0, 0.0, 1.0), [0.452_014, -0.032_457, -0.311_528]),
+            (
+                LinearRgb::new(1.0, 0.0, 0.0),
+                [0.627_955, 0.224_863, 0.125_846],
+            ),
+            (
+                LinearRgb::new(0.0, 1.0, 0.0),
+                [0.866_440, -0.233_888, 0.179_498],
+            ),
+            (
+                LinearRgb::new(0.0, 0.0, 1.0),
+                [0.452_014, -0.032_457, -0.311_528],
+            ),
         ];
         for (rgb, [l, a, b]) in cases {
             let got = rgb.to_oklab();

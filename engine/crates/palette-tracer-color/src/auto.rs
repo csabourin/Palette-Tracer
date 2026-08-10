@@ -29,10 +29,10 @@
 //! Weighted farthest-point initialisation and Lloyd refinement are textbook.
 //! Written from §7.6; no implementation consulted (PTE-LIC-004).
 
-use crate::spaces::{EncodedSrgb, LinearRgb, Oklab};
 use crate::alpha::PremulLinearRgba;
 use crate::palette::{Palette, PaletteEntry};
 use crate::sampler::sample_premultiplied;
+use crate::spaces::{EncodedSrgb, LinearRgb, Oklab};
 use palette_tracer_core::config::{EffectiveColor, ReachSpec};
 use palette_tracer_core::control::{TraceControl, check_cancel};
 use palette_tracer_core::determinism::QuantKey;
@@ -108,7 +108,9 @@ impl ColorHistogram {
         };
         // Quantise in the encoded domain: perceptual spacing there is far more
         // even than in linear light, so the buckets are more evenly loaded.
-        q(encoded.r) * HISTOGRAM_SIDE * HISTOGRAM_SIDE + q(encoded.g) * HISTOGRAM_SIDE + q(encoded.b)
+        q(encoded.r) * HISTOGRAM_SIDE * HISTOGRAM_SIDE
+            + q(encoded.g) * HISTOGRAM_SIDE
+            + q(encoded.b)
     }
 
     /// Add one observation.
@@ -228,11 +230,8 @@ pub fn generate(
     let mut next_id = pinned.iter().map(|e| e.id).max().map_or(0, |m| m + 1);
     for center in centers {
         let rgb = center.to_linear().clamped().to_encoded().to_u8();
-        let mut entry = PaletteEntry::new(
-            next_id,
-            Color::rgb(rgb[0], rgb[1], rgb[2]),
-            default_reach,
-        );
+        let mut entry =
+            PaletteEntry::new(next_id, Color::rgb(rgb[0], rgb[1], rgb[2]), default_reach);
         // The anchor is the *unquantised* centroid, not the rounded output
         // colour: rounding to 8 bits is an output concern, and matching
         // against the rounded value would throw away accuracy the centroid
@@ -401,11 +400,18 @@ pub fn entry_hex(entry: &PaletteEntry) -> String {
 /// by hand.
 #[must_use]
 pub fn anchor_of(rgb: [u8; 3]) -> Oklab {
-    EncodedSrgb::from_u8(rgb[0], rgb[1], rgb[2]).to_linear().to_oklab()
+    EncodedSrgb::from_u8(rgb[0], rgb[1], rgb[2])
+        .to_linear()
+        .to_oklab()
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use palette_tracer_core::config::{Profile, TraceConfig};
@@ -417,7 +423,10 @@ mod tests {
     }
 
     fn image_of(colors: &[[u8; 4]]) -> Vec<u8> {
-        colors.iter().flat_map(|c| c.iter().copied()).collect::<Vec<u8>>()
+        colors
+            .iter()
+            .flat_map(|c| c.iter().copied())
+            .collect::<Vec<u8>>()
     }
 
     fn view<'a>(data: &'a [u8], w: u32, h: u32) -> ImageView<'a> {
@@ -478,11 +487,7 @@ mod tests {
     /// Three well-separated colours must come back as three entries near them.
     #[test]
     fn three_separated_colours_are_recovered() {
-        let pixels = [
-            [220, 30, 40, 255],
-            [30, 40, 220, 255],
-            [40, 200, 60, 255],
-        ];
+        let pixels = [[220, 30, 40, 255], [30, 40, 220, 255], [40, 200, 60, 255]];
         let palette = generate_from(&hist_of(&pixels), 3);
         assert_eq!(palette.len(), 3);
 
@@ -493,7 +498,10 @@ mod tests {
                 .iter()
                 .map(|e| e.anchor.delta_e(anchor))
                 .fold(f64::INFINITY, f64::min);
-            assert!(nearest < 0.05, "no entry near {target:?}: nearest ΔE {nearest}");
+            assert!(
+                nearest < 0.05,
+                "no entry near {target:?}: nearest ΔE {nearest}"
+            );
         }
     }
 
@@ -590,15 +598,7 @@ mod tests {
         let mut limits = palette_tracer_core::limits::ResourceLimits::small();
         limits.work_budget = Some(2);
         let budget = WorkBudget::new(&limits);
-        let err = generate(
-            &h,
-            8,
-            &[],
-            ReachSpec::default(),
-            &budget,
-            &NoControl,
-        )
-        .unwrap_err();
+        let err = generate(&h, 8, &[], ReachSpec::default(), &budget, &NoControl).unwrap_err();
         assert_eq!(err.code(), "resource.work_budget_exhausted");
     }
 }

@@ -608,7 +608,12 @@ impl Profile {
                 d.precision,
                 "auto | fixed(0 to 12 decimals)",
             ),
-            metadata: r.pick("output.metadata", config.output.metadata, true, "true | false"),
+            metadata: r.pick(
+                "output.metadata",
+                config.output.metadata,
+                true,
+                "true | false",
+            ),
             pretty: r.pick("output.pretty", config.output.pretty, false, "true | false"),
             validate_output: r.pick(
                 "output.validateOutput",
@@ -634,6 +639,7 @@ impl Profile {
                 mode: palette_mode,
                 entries,
                 max_colors,
+                default_reach,
             },
             color,
             segmentation,
@@ -649,7 +655,12 @@ impl Profile {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::config::policy::{PaletteEntrySpec, PaletteRole};
@@ -764,7 +775,10 @@ mod tests {
     #[test]
     fn pixel_art_defaults_to_crisp_boundaries_and_no_merging() {
         let effective = expand(&TraceConfig::for_profile(Profile::PixelArt));
-        assert_eq!(effective.geometry.boundary_source, BoundarySource::CrispGrid);
+        assert_eq!(
+            effective.geometry.boundary_source,
+            BoundarySource::CrispGrid
+        );
         assert_eq!(effective.geometry.pixel_art_mode, PixelArtMode::Blocky);
         assert_eq!(effective.segmentation.merge_threshold, 0.0);
         assert_eq!(effective.segmentation.small_region_pixels, 0);

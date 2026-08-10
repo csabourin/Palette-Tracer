@@ -261,7 +261,13 @@ pub fn build(
             if x + 1 < w {
                 let other = labels.get(x + 1, y).0 as usize;
                 if other != region {
-                    record(&mut adjacency, &mut summaries, region, other, field.horizontal(x, y));
+                    record(
+                        &mut adjacency,
+                        &mut summaries,
+                        region,
+                        other,
+                        field.horizontal(x, y),
+                    );
                 }
             } else {
                 summaries[region].perimeter += 1;
@@ -272,7 +278,13 @@ pub fn build(
             if y + 1 < h {
                 let other = labels.get(x, y + 1).0 as usize;
                 if other != region {
-                    record(&mut adjacency, &mut summaries, region, other, field.vertical(x, y));
+                    record(
+                        &mut adjacency,
+                        &mut summaries,
+                        region,
+                        other,
+                        field.vertical(x, y),
+                    );
                 }
             } else {
                 summaries[region].perimeter += 1;
@@ -505,8 +517,7 @@ pub fn merge(
         }
         // PTE-SEG-013: a queued candidate naming a generation that has moved
         // on describes regions that no longer exist in that form.
-        if entry.generations
-            != (graph.generation[a as usize], graph.generation[b as usize])
+        if entry.generations != (graph.generation[a as usize], graph.generation[b as usize])
             || entry.low != a
             || entry.high != b
         {
@@ -750,10 +761,7 @@ pub fn reassign_fringe(
 /// # Errors
 ///
 /// [`TraceError::Decode`] if the new label plane cannot be allocated.
-pub fn apply(
-    graph: &RegionGraph,
-    labels: &LabelPlane,
-) -> Result<(LabelPlane, u32), TraceError> {
+pub fn apply(graph: &RegionGraph, labels: &LabelPlane) -> Result<(LabelPlane, u32), TraceError> {
     let mut remap = vec![u32::MAX; graph.len()];
     let mut next = 0u32;
     for i in 0..labels.len() {
@@ -801,7 +809,12 @@ pub fn index_of(width: u32, x: u32, y: u32) -> usize {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::edges;
@@ -813,11 +826,15 @@ mod tests {
     use palette_tracer_core::limits::ResourceLimits;
 
     fn policy() -> EffectiveSegmentation {
-        Profile::expand(&TraceConfig::default()).unwrap().segmentation
+        Profile::expand(&TraceConfig::default())
+            .unwrap()
+            .segmentation
     }
 
     fn lab(rgb: [u8; 3]) -> Oklab {
-        EncodedSrgb::from_u8(rgb[0], rgb[1], rgb[2]).to_linear().to_oklab()
+        EncodedSrgb::from_u8(rgb[0], rgb[1], rgb[2])
+            .to_linear()
+            .to_oklab()
     }
 
     struct Scene {
@@ -905,12 +922,21 @@ mod tests {
             }
         }
         let mut s = scene(&colors, &[0; 64], 8, 8, &[false]);
-        merge(&mut s.graph, &policy(), &WorkBudget::unbounded(), &NoControl).unwrap();
+        merge(
+            &mut s.graph,
+            &policy(),
+            &WorkBudget::unbounded(),
+            &NoControl,
+        )
+        .unwrap();
 
         let (labels, count) = apply(&s.graph, &s.labels).unwrap();
         let counts = labels.histogram(count as usize);
         assert_eq!(counts.iter().sum::<u64>(), 64);
-        assert!(counts.iter().all(|&c| c > 0), "dense numbering after merging");
+        assert!(
+            counts.iter().all(|&c| c > 0),
+            "dense numbering after merging"
+        );
     }
 
     /// PTE-SEG-012: two different pinned identities never merge, however
@@ -935,14 +961,24 @@ mod tests {
             .filter(|&i| s.graph.alive[i as usize])
             .map(|i| s.graph.summary(i).claim)
             .collect();
-        merge(&mut s.graph, &policy(), &WorkBudget::unbounded(), &NoControl).unwrap();
+        merge(
+            &mut s.graph,
+            &policy(),
+            &WorkBudget::unbounded(),
+            &NoControl,
+        )
+        .unwrap();
         let after: Vec<LabelId> = (0..s.graph.len() as u32)
             .filter(|&i| s.graph.alive[i as usize])
             .map(|i| s.graph.summary(i).claim)
             .collect();
 
         if before.len() == 2 && before[0] != before[1] {
-            assert_eq!(after.len(), 2, "pinned identities merged: {before:?} -> {after:?}");
+            assert_eq!(
+                after.len(),
+                2,
+                "pinned identities merged: {before:?} -> {after:?}"
+            );
         }
     }
 
@@ -953,19 +989,20 @@ mod tests {
         let mut colors = Vec::new();
         for y in 0..6u32 {
             for x in 0..6u32 {
-                colors.push(lab([
-                    (x * 30) as u8,
-                    (y * 30) as u8,
-                    128,
-                ]));
+                colors.push(lab([(x * 30) as u8, (y * 30) as u8, 128]));
             }
         }
         let claims = [0u32; 36];
 
         let run = || {
             let mut s = scene(&colors, &claims, 6, 6, &[false]);
-            let outcome =
-                merge(&mut s.graph, &policy(), &WorkBudget::unbounded(), &NoControl).unwrap();
+            let outcome = merge(
+                &mut s.graph,
+                &policy(),
+                &WorkBudget::unbounded(),
+                &NoControl,
+            )
+            .unwrap();
             let (labels, count) = apply(&s.graph, &s.labels).unwrap();
             (outcome.merges, count, labels)
         };
@@ -1010,7 +1047,10 @@ mod tests {
             "a 20x1 hairline ({hairline_score}) must be protected more than a \
              single pixel ({speck_score})"
         );
-        assert!(hairline_score > 0.5, "the hairline must actually be protected");
+        assert!(
+            hairline_score > 0.5,
+            "the hairline must actually be protected"
+        );
 
         // And a compact blob of the same area as the hairline is not.
         let blob = RegionSummary {

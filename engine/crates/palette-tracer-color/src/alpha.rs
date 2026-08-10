@@ -55,12 +55,7 @@ impl PremulLinearRgba {
     /// From straight linear colour and alpha.
     #[must_use]
     pub fn from_straight(color: LinearRgb, alpha: f64) -> Self {
-        Self::new(
-            color.r * alpha,
-            color.g * alpha,
-            color.b * alpha,
-            alpha,
-        )
+        Self::new(color.r * alpha, color.g * alpha, color.b * alpha, alpha)
     }
 
     /// Recover straight colour, or `None` when alpha is below `epsilon`.
@@ -77,7 +72,7 @@ impl PremulLinearRgba {
                 self.r / self.a,
                 self.g / self.a,
                 self.b / self.a,
-                ))
+            ))
         }
     }
 
@@ -116,10 +111,7 @@ impl PremulLinearRgba {
     /// do not fit straight RGB and alpha independently."
     #[must_use]
     pub fn weighted_dot(self, other: Self, alpha_weight: f64) -> f64 {
-        self.r * other.r
-            + self.g * other.g
-            + self.b * other.b
-            + alpha_weight * self.a * other.a
+        self.r * other.r + self.g * other.g + self.b * other.b + alpha_weight * self.a * other.a
     }
 
     /// Squared weighted norm.
@@ -161,7 +153,12 @@ impl PremulLinearRgba {
 pub const ALPHA_CHANNEL_WEIGHT: f64 = 1.0;
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use proptest::prelude::*;

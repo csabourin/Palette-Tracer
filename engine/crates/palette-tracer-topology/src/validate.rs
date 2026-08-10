@@ -306,7 +306,12 @@ pub fn euler_characteristic(t: &Topology) -> i64 {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::extract::{ExtractOptions, extract};
@@ -344,7 +349,9 @@ mod tests {
         extract(
             &plane,
             &vec![Oklab::ZERO; cells.len()],
-            &(0..region_count).map(|i| Some(PaletteId(i as u32))).collect::<Vec<_>>(),
+            &(0..region_count)
+                .map(|i| Some(PaletteId(i as u32)))
+                .collect::<Vec<_>>(),
             &vec![false; region_count],
             &ExtractOptions::default(),
             &ResourceLimits::default(),

@@ -223,11 +223,17 @@ impl LabelPlane {
     pub fn set_index(&mut self, i: usize, label: LabelId) {
         match &mut self.storage {
             Storage::U8(v) => {
-                debug_assert!(label.0 <= u32::from(u8::MAX), "label {label:?} exceeds u8 tier");
+                debug_assert!(
+                    label.0 <= u32::from(u8::MAX),
+                    "label {label:?} exceeds u8 tier"
+                );
                 v[i] = label.0.min(u32::from(u8::MAX)) as u8;
             }
             Storage::U16(v) => {
-                debug_assert!(label.0 <= u32::from(u16::MAX), "label {label:?} exceeds u16 tier");
+                debug_assert!(
+                    label.0 <= u32::from(u16::MAX),
+                    "label {label:?} exceeds u16 tier"
+                );
                 v[i] = label.0.min(u32::from(u16::MAX)) as u16;
             }
             Storage::U32(v) => v[i] = label.0,
@@ -288,7 +294,12 @@ impl LabelPlane {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
 

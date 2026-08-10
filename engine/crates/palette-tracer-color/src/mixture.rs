@@ -237,7 +237,10 @@ fn solve_simplex(
     // Basis of differences from the last member.
     let free = &members[..k - 1];
     let dim = free.len();
-    let basis: Vec<PremulLinearRgba> = free.iter().map(|&i| colors[i].minus(colors[base])).collect();
+    let basis: Vec<PremulLinearRgba> = free
+        .iter()
+        .map(|&i| colors[i].minus(colors[base]))
+        .collect();
     let target = c.minus(colors[base]);
 
     // Normal equations: (Bᵀ B) x = Bᵀ t.
@@ -310,7 +313,12 @@ fn gaussian_solve(matrix: &mut [f64], rhs: &mut [f64], dim: usize) -> Option<Vec
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::spaces::LinearRgb;
@@ -477,12 +485,11 @@ mod tests {
             let a = opaque(ar, 0.0, ab);
             let b = opaque(br, 0.0, bb);
             let c = opaque(cr, 0.0, cb);
-            match two_color(c, a, b, &policy) {
-                Ok(m) => {
-                    prop_assert!((0.0..=1.0).contains(&m.coverage));
-                    prop_assert!(m.residual.is_finite() && m.residual >= 0.0);
-                }
-                Err(_) => {}
+            // A rejection is a legitimate outcome; what must never happen is
+            // an accepted estimate that is out of range or non-finite.
+            if let Ok(m) = two_color(c, a, b, &policy) {
+                prop_assert!((0.0..=1.0).contains(&m.coverage));
+                prop_assert!(m.residual.is_finite() && m.residual >= 0.0);
             }
         }
 

@@ -172,7 +172,11 @@ impl ResourceLimits {
     ///
     /// [`ResourceLimitError::Exceeded`] for `max_output_elements`.
     pub fn check_output_elements(&self, count: u64) -> Result<(), ResourceLimitError> {
-        Self::check_count("max_output_elements", count, u64::from(self.max_output_elements))
+        Self::check_count(
+            "max_output_elements",
+            count,
+            u64::from(self.max_output_elements),
+        )
     }
 }
 
@@ -292,7 +296,12 @@ impl WorkBudget {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::control::Stage;

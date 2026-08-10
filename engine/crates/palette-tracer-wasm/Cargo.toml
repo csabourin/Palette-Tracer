@@ -1,8 +1,16 @@
 [package]
 name = "palette-tracer-wasm"
+description = "Host-free session adapter for the Palette Tracer Engine, shaped for a WebAssembly binding"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+palette-tracer.workspace = true
+palette-tracer-core.workspace = true
 
 [lints]
 workspace = true

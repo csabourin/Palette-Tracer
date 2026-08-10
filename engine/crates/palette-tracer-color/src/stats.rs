@@ -143,7 +143,12 @@ impl ColorStats {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
@@ -173,10 +178,7 @@ mod tests {
     /// direct calculation.
     #[test]
     fn merged_statistics_equal_the_direct_calculation() {
-        let a = [
-            Oklab::new(0.1, 0.02, -0.03),
-            Oklab::new(0.15, 0.01, -0.02),
-        ];
+        let a = [Oklab::new(0.1, 0.02, -0.03), Oklab::new(0.15, 0.01, -0.02)];
         let b = [
             Oklab::new(0.8, -0.05, 0.06),
             Oklab::new(0.82, -0.04, 0.07),

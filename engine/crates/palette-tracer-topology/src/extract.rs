@@ -426,7 +426,8 @@ pub fn extract(
     // Outer cycles first within each face, so a serialiser can emit the
     // boundary before its holes without re-sorting (§18.4).
     for face in &mut faces {
-        face.cycles.sort_by_key(|c| (c.kind == CycleKind::Hole, c.start.0));
+        face.cycles
+            .sort_by_key(|c| (c.kind == CycleKind::Hole, c.start.0));
     }
 
     Ok(Extraction {
@@ -493,7 +494,8 @@ fn trace_chain(
 
     // The bound is the total dart count, so a corrupt neighbourhood produces
     // an error rather than a hang (PTE-SEC-008).
-    let bound = 4 * (usize::try_from(width).unwrap_or(0) + 1) * (usize::try_from(height).unwrap_or(0) + 1);
+    let bound =
+        4 * (usize::try_from(width).unwrap_or(0) + 1) * (usize::try_from(height).unwrap_or(0) + 1);
     for _ in 0..bound {
         let Some(end) = current.end(width, height) else {
             return Err(palette_tracer_core::internal_error!(
@@ -581,7 +583,12 @@ fn next_dart(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use palette_tracer_core::control::NoControl;
@@ -599,8 +606,9 @@ mod tests {
         let p = plane(cells, width, height);
         let region_count = cells.iter().max().map_or(0, |m| *m as usize + 1);
         let colors = vec![Oklab::ZERO; cells.len()];
-        let palette: Vec<Option<PaletteId>> =
-            (0..region_count).map(|i| Some(PaletteId(i as u32))).collect();
+        let palette: Vec<Option<PaletteId>> = (0..region_count)
+            .map(|i| Some(PaletteId(i as u32)))
+            .collect();
         let pinned = vec![false; region_count];
         extract(
             &p,
@@ -754,7 +762,10 @@ mod tests {
     #[test]
     fn a_four_label_junction_is_counted() {
         let e = extract_of(&[0, 1, 2, 3], 2, 2);
-        assert_eq!(e.ambiguous_cells, 0, "four distinct labels are not ambiguous");
+        assert_eq!(
+            e.ambiguous_cells, 0,
+            "four distinct labels are not ambiguous"
+        );
         assert_eq!(
             e.junctions, 5,
             "the centre, plus one on each side of the border"

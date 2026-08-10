@@ -313,8 +313,8 @@ impl<'a> ImageView<'a> {
         if !self.contains(x, y) {
             return [0.0; 4];
         }
-        let base = u32_to_usize(y) * self.stride_bytes
-            + u32_to_usize(x) * self.format.bytes_per_pixel();
+        let base =
+            u32_to_usize(y) * self.stride_bytes + u32_to_usize(x) * self.format.bytes_per_pixel();
         let b = &self.data[base..];
         match self.format {
             PixelFormat::Gray8 => {
@@ -364,11 +364,22 @@ impl<'a> ImageView<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
 
-    fn view(w: u32, h: u32, stride: usize, fmt: PixelFormat, data: &[u8]) -> Result<ImageView<'_>, DecodeError> {
+    fn view(
+        w: u32,
+        h: u32,
+        stride: usize,
+        fmt: PixelFormat,
+        data: &[u8],
+    ) -> Result<ImageView<'_>, DecodeError> {
         ImageView::new(
             w,
             h,

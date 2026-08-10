@@ -202,7 +202,10 @@ impl fmt::Display for ConfigError {
                  it is refused rather than silently ignored"
             ),
             Self::UnsupportedSchemaVersion { got, supported } => {
-                write!(f, "config schema version {got}, this build implements {supported}")
+                write!(
+                    f,
+                    "config schema version {got}, this build implements {supported}"
+                )
             }
             Self::Palette { reason } => write!(f, "palette is invalid: {reason}"),
         }
@@ -293,7 +296,10 @@ impl fmt::Display for DecodeError {
             Self::StrideTooSmall {
                 stride_bytes,
                 minimum,
-            } => write!(f, "stride {stride_bytes} is below the {minimum} a row needs"),
+            } => write!(
+                f,
+                "stride {stride_bytes} is below the {minimum} a row needs"
+            ),
             Self::StrideMisaligned {
                 stride_bytes,
                 bytes_per_pixel,
@@ -507,7 +513,12 @@ macro_rules! internal_error {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
 
@@ -516,10 +527,7 @@ mod tests {
     #[test]
     fn exit_codes_match_the_spec_table() {
         let cases: [(TraceError, i32); 7] = [
-            (
-                TraceError::Config(ConfigError::NotFinite { field: "x" }),
-                2,
-            ),
+            (TraceError::Config(ConfigError::NotFinite { field: "x" }), 2),
             (TraceError::Decode(DecodeError::EmptyImage), 3),
             (
                 TraceError::ResourceLimit(ResourceLimitError::Exceeded {

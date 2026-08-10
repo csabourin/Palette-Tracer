@@ -523,7 +523,13 @@ pub struct GradientPolicy {
 
 impl Validate for GradientPolicy {
     fn validate(&self) -> Result<(), ConfigError> {
-        check_u32_range("gradients.maxStops", self.max_stops, 2, 256, "between 2 and 256")
+        check_u32_range(
+            "gradients.maxStops",
+            self.max_stops,
+            2,
+            256,
+            "between 2 and 256",
+        )
     }
 }
 
@@ -547,7 +553,13 @@ impl Validate for FabricationPolicy {
             ("fabrication.physicalWidthMm", self.physical_width_mm),
             ("fabrication.physicalHeightMm", self.physical_height_mm),
         ] {
-            check_range(field, value, 0.01, 100_000.0, "a positive size in millimetres")?;
+            check_range(
+                field,
+                value,
+                0.01,
+                100_000.0,
+                "a positive size in millimetres",
+            )?;
         }
         for (field, value) in [
             ("fabrication.kerfMm", self.kerf_mm),
@@ -631,7 +643,12 @@ impl Validate for DeterminismPolicy {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
 

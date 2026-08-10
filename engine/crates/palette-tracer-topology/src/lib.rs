@@ -43,7 +43,12 @@ pub use grid::{Dir, GridPoint, Labels};
 pub use validate::{euler_characteristic, validate};
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod property_tests {
     use super::*;
     use palette_tracer_color::spaces::Oklab;

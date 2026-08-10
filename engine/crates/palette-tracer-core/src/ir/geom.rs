@@ -48,7 +48,10 @@ impl Point {
     /// Linear interpolation toward `other`.
     #[must_use]
     pub fn lerp(self, other: Self, t: f64) -> Self {
-        Self::new(self.x + (other.x - self.x) * t, self.y + (other.y - self.y) * t)
+        Self::new(
+            self.x + (other.x - self.x) * t,
+            self.y + (other.y - self.y) * t,
+        )
     }
 }
 
@@ -405,7 +408,12 @@ impl CurveChain {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
 
@@ -471,8 +479,14 @@ mod tests {
         let r = sample_chain().reversed();
         match r.segments[0] {
             PathSegment::Arc { large, sweep, .. } => {
-                assert!(large, "the large-arc flag describes the arc, not the direction");
-                assert!(sweep, "the sweep flag describes the direction and must flip");
+                assert!(
+                    large,
+                    "the large-arc flag describes the arc, not the direction"
+                );
+                assert!(
+                    sweep,
+                    "the sweep flag describes the direction and must flip"
+                );
             }
             _ => panic!("expected the arc first after reversal"),
         }
@@ -489,18 +503,22 @@ mod tests {
     /// check that stops it lives on the segment itself.
     #[test]
     fn non_finite_and_illegal_segments_are_detected() {
-        assert!(!PathSegment::Line {
-            to: Point::new(f64::NAN, 0.0)
-        }
-        .is_finite());
-        assert!(!PathSegment::Arc {
-            radii: Vec2::new(-1.0, 1.0),
-            rotation: 0.0,
-            large: false,
-            sweep: false,
-            to: Point::ORIGIN,
-        }
-        .is_finite());
+        assert!(
+            !PathSegment::Line {
+                to: Point::new(f64::NAN, 0.0)
+            }
+            .is_finite()
+        );
+        assert!(
+            !PathSegment::Arc {
+                radii: Vec2::new(-1.0, 1.0),
+                rotation: 0.0,
+                large: false,
+                sweep: false,
+                to: Point::ORIGIN,
+            }
+            .is_finite()
+        );
         assert!(sample_chain().is_finite());
     }
 

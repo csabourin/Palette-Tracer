@@ -232,7 +232,12 @@ pub fn build(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::edges::{self, PixelEvidence};
@@ -242,11 +247,15 @@ mod tests {
     use palette_tracer_core::control::NoControl;
 
     fn policy() -> EffectiveSegmentation {
-        Profile::expand(&TraceConfig::default()).unwrap().segmentation
+        Profile::expand(&TraceConfig::default())
+            .unwrap()
+            .segmentation
     }
 
     fn lab(rgb: [u8; 3]) -> Oklab {
-        EncodedSrgb::from_u8(rgb[0], rgb[1], rgb[2]).to_linear().to_oklab()
+        EncodedSrgb::from_u8(rgb[0], rgb[1], rgb[2])
+            .to_linear()
+            .to_oklab()
     }
 
     fn partition_of(colors: &[Oklab], width: u32, height: u32) -> Partition {
@@ -257,8 +266,8 @@ mod tests {
             width,
             height,
         };
-        let field = edges::build(&evidence, &policy(), &WorkBudget::unbounded(), &NoControl)
-            .unwrap();
+        let field =
+            edges::build(&evidence, &policy(), &WorkBudget::unbounded(), &NoControl).unwrap();
         build(
             &field,
             &policy(),
@@ -277,7 +286,11 @@ mod tests {
         let mut colors = Vec::new();
         for y in 0..8 {
             for x in 0..8 {
-                colors.push(if x < 4 { lab([20, 20, 20]) } else { lab([230, 230, 230]) });
+                colors.push(if x < 4 {
+                    lab([20, 20, 20])
+                } else {
+                    lab([230, 230, 230])
+                });
                 let _ = y;
             }
         }
@@ -302,7 +315,11 @@ mod tests {
         let mut colors = Vec::new();
         for _ in 0..4 {
             for x in 0..4 {
-                colors.push(if x < 2 { lab([10, 10, 10]) } else { lab([245, 245, 245]) });
+                colors.push(if x < 2 {
+                    lab([10, 10, 10])
+                } else {
+                    lab([245, 245, 245])
+                });
             }
         }
         let p = partition_of(&colors, 4, 4);
@@ -318,7 +335,11 @@ mod tests {
         let mut colors = Vec::new();
         for _ in 0..2 {
             for x in 0..4 {
-                colors.push(if x < 2 { lab([245, 245, 245]) } else { lab([10, 10, 10]) });
+                colors.push(if x < 2 {
+                    lab([245, 245, 245])
+                } else {
+                    lab([10, 10, 10])
+                });
             }
         }
         let p = partition_of(&colors, 4, 2);
@@ -355,7 +376,11 @@ mod tests {
         for y in 0..5u32 {
             for x in 0..5u32 {
                 // A diagonal feature, which is what exposes directional bias.
-                colors.push(if x == y { lab([20, 20, 20]) } else { lab([240, 240, 240]) });
+                colors.push(if x == y {
+                    lab([20, 20, 20])
+                } else {
+                    lab([240, 240, 240])
+                });
             }
         }
         let original = partition_of(&colors, 5, 5);
@@ -384,19 +409,36 @@ mod tests {
         }
     }
 
-    /// PTE-SEC-006: the adversarial case. A checkerboard has one region per
-    /// pixel, and the limit must catch it after the image was accepted.
+    /// Under 8-connectivity a checkerboard is *two* interleaved diagonal
+    /// regions, not 256 single pixels. That is the correct reading, and it is
+    /// what gives §9.4 something to decide.
     #[test]
-    fn an_adversarial_region_count_hits_the_limit_cleanly() {
+    fn a_checkerboard_is_two_diagonal_regions_not_one_per_pixel() {
         let mut colors = Vec::new();
-        for y in 0..16u32 {
-            for x in 0..16u32 {
+        for y in 0..8u32 {
+            for x in 0..8u32 {
                 colors.push(if (x + y) % 2 == 0 {
                     lab([0, 0, 0])
                 } else {
                     lab([255, 255, 255])
                 });
             }
+        }
+        let p = partition_of(&colors, 8, 8);
+        assert_eq!(p.region_count, 2);
+    }
+
+    /// PTE-SEC-006: the adversarial case that really does explode. Colour noise
+    /// gives one region per pixel under any connectivity, and the limit must
+    /// catch it after the image itself was accepted.
+    #[test]
+    fn an_adversarial_region_count_hits_the_limit_cleanly() {
+        // A fixed, reproducible spread of well-separated colours: no two
+        // neighbours are close enough to join.
+        let mut colors = Vec::new();
+        for i in 0..256u32 {
+            let v = (i * 61 % 256) as u8;
+            colors.push(lab([v, 255 - v, (i * 37 % 256) as u8]));
         }
         let evidence = PixelEvidence {
             color: colors,

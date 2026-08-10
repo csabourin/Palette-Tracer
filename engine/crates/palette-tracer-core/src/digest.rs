@@ -35,9 +35,7 @@
 use crate::config::EffectiveConfig;
 use crate::determinism::QuantKey;
 use crate::error::NumericalError;
-use crate::ir::{
-    CurveChain, Element, PathSegment, Point, VectorDocument,
-};
+use crate::ir::{CurveChain, Element, PathSegment, Point, VectorDocument};
 use crate::report::{AlgorithmVersions, Fallback};
 
 /// Digest schema version, the first token in the stream.
@@ -204,7 +202,11 @@ fn write_chain(w: &mut DigestWriter, chain: &CurveChain) -> Result<(), Numerical
 
     let n = chain.segments.len();
     for offset in 0..n {
-        let i = if closed { (rotation + offset) % n } else { offset };
+        let i = if closed {
+            (rotation + offset) % n
+        } else {
+            offset
+        };
         match chain.segments[i] {
             PathSegment::Line { to } => {
                 w.tag("L");
@@ -363,6 +365,9 @@ fn write_config(w: &mut DigestWriter, config: &EffectiveConfig) -> Result<(), Nu
 
     w.tag("palette");
     w.u64(u64::from(config.palette.max_colors));
+    w.scalar(config.palette.default_reach.lightness.get())?;
+    w.scalar(config.palette.default_reach.chroma.get())?;
+    w.scalar(config.palette.default_reach.hue.get())?;
     w.u64(config.palette.entries.len() as u64);
     for e in &config.palette.entries {
         w.u64(u64::from(e.id));
@@ -509,14 +514,17 @@ pub fn digest_document(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::config::{Profile, TraceConfig};
-    use crate::ir::{
-        Color, DocumentProvenance, FillRule, FilledFace, Layer, Paint, Rect,
-    };
     use crate::ir::topology::{FaceId, PaletteId};
+    use crate::ir::{Color, DocumentProvenance, FillRule, FilledFace, Layer, Paint, Rect};
 
     fn closed_square(offset: f64) -> CurveChain {
         CurveChain::polyline(&[
@@ -658,8 +666,7 @@ mod tests {
         let doc = document(vec![closed_square(0.0)]);
         let base = Profile::expand(&TraceConfig::default()).unwrap();
         let mut other = TraceConfig::default();
-        other.geometry.curve_tolerance_px =
-            Some(crate::config::Finite::new(2.5, "t").unwrap());
+        other.geometry.curve_tolerance_px = Some(crate::config::Finite::new(2.5, "t").unwrap());
         let other = Profile::expand(&other).unwrap();
 
         let a = digest_document(&doc, &base, &AlgorithmVersions::default(), &[], &[]).unwrap();
@@ -686,9 +693,7 @@ mod tests {
             CurveChain::polyline(&[Point::new(f64::NAN, 0.0), Point::new(1.0, 1.0)]).unwrap(),
         ]);
         let config = Profile::expand(&TraceConfig::default()).unwrap();
-        assert!(
-            digest_document(&doc, &config, &AlgorithmVersions::default(), &[], &[]).is_err()
-        );
+        assert!(digest_document(&doc, &config, &AlgorithmVersions::default(), &[], &[]).is_err());
     }
 
     /// Tagged tokens exist so two different structures cannot produce the same

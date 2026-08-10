@@ -24,6 +24,24 @@
 //!
 //! # Quantisation
 //!
+//! # Connectivity
+//!
+//! §8.2 permits "the 4- or 8-connected pixel graph", and this build uses the
+//! 8-connected one. That is not a quality tweak; it is what makes §9.4 mean
+//! anything. Under 4-connectivity the pixels of a one-pixel diagonal line are
+//! never adjacent, so each becomes its own region, the label map never contains
+//! the `A B / B A` pattern, and the ambiguity machinery is dead code that
+//! happens to compile. Under 8-connectivity the line is one region, every cell
+//! along it is ambiguous, and §9.4 decides -- which is the behaviour the
+//! specification describes.
+//!
+//! The *region adjacency graph* stays 4-connected: a shared boundary is a
+//! shared raster interface, and two regions touching only at a corner share no
+//! interface and no length. So connectivity and adjacency deliberately differ,
+//! and each is used for the thing it means.
+//!
+//! # Quantisation
+//!
 //! Weights are stored as `u16`. That is not a memory optimisation -- it is
 //! what makes the partition deterministic. A counting sort over 65536 buckets
 //! is exact and order-preserving, so two targets whose floating-point
@@ -96,6 +114,10 @@ pub struct EdgeField {
     horizontal: Vec<u16>,
     /// Cost between `(x, y)` and `(x, y + 1)`, indexed by `(x, y)`.
     vertical: Vec<u16>,
+    /// Cost between `(x, y)` and `(x + 1, y + 1)`, indexed by `(x, y)`.
+    down_right: Vec<u16>,
+    /// Cost between `(x, y)` and `(x - 1, y + 1)`, indexed by `(x, y)`.
+    down_left: Vec<u16>,
 }
 
 impl EdgeField {
@@ -135,7 +157,11 @@ impl EdgeField {
     #[must_use]
     pub fn bytes(&self) -> u64 {
         palette_tracer_core::checked::usize_to_u64(
-            (self.horizontal.len() + self.vertical.len()) * 2,
+            (self.horizontal.len()
+                + self.vertical.len()
+                + self.down_right.len()
+                + self.down_left.len())
+                * 2,
         )
     }
 
@@ -153,7 +179,14 @@ impl EdgeField {
                 let i = y * w + x;
                 let right = (x + 1 < w).then(|| (self.horizontal[i], i, i + 1));
                 let down = (y + 1 < h).then(|| (self.vertical[i], i, i + w));
-                right.into_iter().chain(down)
+                let down_right =
+                    (x + 1 < w && y + 1 < h).then(|| (self.down_right[i], i, i + w + 1));
+                let down_left = (x > 0 && y + 1 < h).then(|| (self.down_left[i], i, i + w - 1));
+                right
+                    .into_iter()
+                    .chain(down)
+                    .chain(down_right)
+                    .chain(down_left)
             })
         })
     }
@@ -174,6 +207,8 @@ pub fn build(
     let h = u32_to_usize(evidence.height);
     let mut horizontal = vec![0u16; w * h];
     let mut vertical = vec![0u16; w * h];
+    let mut down_right = vec![0u16; w * h];
+    let mut down_left = vec![0u16; w * h];
 
     let total_weight = policy.edge_weight_color
         + policy.edge_weight_gradient
@@ -181,7 +216,11 @@ pub fn build(
         + policy.edge_weight_claim;
     // A caller who zeroes every weight gets a uniform field rather than a
     // division by zero; the partition then comes from connectivity alone.
-    let normaliser = if total_weight > 0.0 { total_weight } else { 1.0 };
+    let normaliser = if total_weight > 0.0 {
+        total_weight
+    } else {
+        1.0
+    };
 
     let mut counter = 0usize;
     for y in 0..h {
@@ -197,6 +236,19 @@ pub fn build(
             if y + 1 < h {
                 vertical[i] = weight(evidence, policy, normaliser, i, i + w, (0, 2), (w, h));
             }
+            // Diagonal costs carry a penalty: a corner touch is weaker evidence
+            // of continuity than a shared edge, so a diagonal join must be a
+            // clearer colour match than an orthogonal one to win. The factor is
+            // the ratio of the distances, which is the same normalisation the
+            // edge cost's units already imply.
+            if x + 1 < w && y + 1 < h {
+                let base = weight(evidence, policy, normaliser, i, i + w + 1, (2, 2), (w, h));
+                down_right[i] = diagonal_penalty(base);
+            }
+            if x > 0 && y + 1 < h {
+                let base = weight(evidence, policy, normaliser, i, i + w - 1, (0, 0), (w, h));
+                down_left[i] = diagonal_penalty(base);
+            }
         }
     }
 
@@ -205,6 +257,8 @@ pub fn build(
         height: evidence.height,
         horizontal,
         vertical,
+        down_right,
+        down_left,
     })
 }
 
@@ -262,6 +316,22 @@ fn weight(
     quantise(combined)
 }
 
+/// Scale a diagonal cost by the distance ratio.
+///
+/// Two pixels a corner apart are `sqrt(2)` times as far as two sharing an edge,
+/// so the same colour difference is a steeper gradient and a weaker case for
+/// joining. Saturating rather than wrapping keeps the ordering total.
+#[must_use]
+fn diagonal_penalty(weight: u16) -> u16 {
+    const SQRT_2: f64 = core::f64::consts::SQRT_2;
+    let scaled = f64::from(weight) * SQRT_2;
+    if scaled >= f64::from(MAX_WEIGHT) {
+        MAX_WEIGHT
+    } else {
+        scaled.round() as u16
+    }
+}
+
 /// Map a normalised cost in `[0, 1]` to the `u16` grid.
 #[must_use]
 pub fn quantise(value: f64) -> u16 {
@@ -317,14 +387,21 @@ pub fn evidence_from(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use palette_tracer_core::config::{Profile, TraceConfig};
     use palette_tracer_core::control::NoControl;
 
     fn policy() -> EffectiveSegmentation {
-        Profile::expand(&TraceConfig::default()).unwrap().segmentation
+        Profile::expand(&TraceConfig::default())
+            .unwrap()
+            .segmentation
     }
 
     fn evidence(colors: &[Oklab], width: u32, height: u32) -> PixelEvidence {
@@ -370,7 +447,12 @@ mod tests {
     fn a_colour_boundary_costs_more_than_a_flat_interior() {
         // Left half dark, right half light, 4x1.
         let e = evidence(
-            &[lab([20, 20, 20]), lab([20, 20, 20]), lab([230, 230, 230]), lab([230, 230, 230])],
+            &[
+                lab([20, 20, 20]),
+                lab([20, 20, 20]),
+                lab([230, 230, 230]),
+                lab([230, 230, 230]),
+            ],
             4,
             1,
         );
@@ -464,13 +546,17 @@ mod tests {
         let e = evidence(&[lab([10, 10, 10]); 6], 3, 2);
         let field = build_field(&e);
         let edges: Vec<_> = field.edges().collect();
-        // A 3x2 grid has 2*2 horizontal and 3*1 vertical edges.
-        assert_eq!(edges.len(), 4 + 3);
+        // A 3x2 grid on the 8-connected graph has 2*2 horizontal, 3*1
+        // vertical, 2 down-right and 2 down-left edges.
+        assert_eq!(edges.len(), 4 + 3 + 2 + 2);
         let mut pairs: Vec<(usize, usize)> = edges.iter().map(|&(_, a, b)| (a, b)).collect();
         pairs.sort_unstable();
         pairs.dedup();
-        assert_eq!(pairs.len(), 7, "no edge may be enumerated twice");
-        assert!(pairs.iter().all(|&(a, b)| a < b), "edges must be canonical");
+        assert_eq!(pairs.len(), 11, "no edge may be enumerated twice");
+        assert!(
+            pairs.iter().all(|&(a, b)| a < b),
+            "edges must be canonical: {pairs:?}"
+        );
     }
 
     #[test]

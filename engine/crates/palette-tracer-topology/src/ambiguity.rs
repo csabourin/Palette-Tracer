@@ -156,14 +156,12 @@ pub fn decide(
     let x = i64::from(vertex.x);
     let y = i64::from(vertex.y);
     let color_at = |px: i64, py: i64| -> Option<Oklab> {
-        if px < 0
-            || py < 0
-            || px >= i64::from(labels.width())
-            || py >= i64::from(labels.height())
-        {
+        if px < 0 || py < 0 || px >= i64::from(labels.width()) || py >= i64::from(labels.height()) {
             None
         } else {
-            colors.get(py as usize * labels.width() as usize + px as usize).copied()
+            colors
+                .get(py as usize * labels.width() as usize + px as usize)
+                .copied()
         }
     };
 
@@ -176,8 +174,20 @@ pub fn decide(
     let data_b = diagonal_similarity(&color_at, b_pixels);
 
     // Continuity, as described in the module documentation.
-    let cont_a = continuity(labels, nw, (x - 1, y - 1), (x, y), [(x - 2, y - 2), (x + 1, y + 1)]);
-    let cont_b = continuity(labels, ne, (x, y - 1), (x - 1, y), [(x + 1, y - 2), (x - 2, y + 1)]);
+    let cont_a = continuity(
+        labels,
+        nw,
+        (x - 1, y - 1),
+        (x, y),
+        [(x - 2, y - 2), (x + 1, y + 1)],
+    );
+    let cont_b = continuity(
+        labels,
+        ne,
+        (x, y - 1),
+        (x - 1, y),
+        [(x + 1, y - 2), (x - 2, y + 1)],
+    );
 
     // Mixture: is one diagonal's colour explained as coverage of the other?
     // A diagonal that is a mixture is fringe, and fringe is not a feature.
@@ -335,9 +345,8 @@ fn mixture_evidence(
     other: [(i64, i64); 2],
 ) -> f64 {
     let policy = MixturePolicy::default();
-    let to_premul = |c: Oklab| {
-        palette_tracer_color::PremulLinearRgba::from_straight(c.to_linear(), 1.0)
-    };
+    let to_premul =
+        |c: Oklab| palette_tracer_color::PremulLinearRgba::from_straight(c.to_linear(), 1.0);
 
     let Some(c) = color_at(candidate[0].0, candidate[0].1) else {
         return 0.0;
@@ -381,7 +390,12 @@ fn density(labels: &Labels<'_>, label: LabelId, vertex: GridPoint) -> f64 {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use palette_tracer_color::EncodedSrgb;
@@ -415,7 +429,10 @@ mod tests {
     #[test]
     fn only_the_checkerboard_configuration_is_ambiguous() {
         let (four_labels, _) = scene(&[1, 2, 3, 4], 2, 2);
-        assert!(!is_ambiguous(&Labels::new(&four_labels), GridPoint::new(1, 1)));
+        assert!(!is_ambiguous(
+            &Labels::new(&four_labels),
+            GridPoint::new(1, 1)
+        ));
 
         let (checker, _) = scene(&[1, 2, 2, 1], 2, 2);
         assert!(is_ambiguous(&Labels::new(&checker), GridPoint::new(1, 1)));
@@ -434,7 +451,13 @@ mod tests {
             cells[i * 4 + i] = 1;
         }
         // The vertex at (2, 2) sits between diagonal pixels (1,1) and (2,2).
-        let connection = decide_at(&cells, 4, 4, GridPoint::new(2, 2), AmbiguityProfile::Antialiased);
+        let connection = decide_at(
+            &cells,
+            4,
+            4,
+            GridPoint::new(2, 2),
+            AmbiguityProfile::Antialiased,
+        );
         assert_eq!(
             connection,
             Connection::NorthWestSouthEast,
@@ -451,7 +474,13 @@ mod tests {
         for i in 0..4 {
             cells[i * 4 + (3 - i)] = 1;
         }
-        let connection = decide_at(&cells, 4, 4, GridPoint::new(2, 2), AmbiguityProfile::Antialiased);
+        let connection = decide_at(
+            &cells,
+            4,
+            4,
+            GridPoint::new(2, 2),
+            AmbiguityProfile::Antialiased,
+        );
         assert_eq!(
             connection,
             Connection::NorthEastSouthWest,
@@ -521,7 +550,13 @@ mod tests {
             0, 0, 1, 0, //
             0, 0, 0, 1, //
         ];
-        let original = decide_at(&cells, 4, 4, GridPoint::new(2, 2), AmbiguityProfile::Antialiased);
+        let original = decide_at(
+            &cells,
+            4,
+            4,
+            GridPoint::new(2, 2),
+            AmbiguityProfile::Antialiased,
+        );
 
         let mut mirrored = vec![0u32; 16];
         for y in 0..4usize {
@@ -529,8 +564,13 @@ mod tests {
                 mirrored[y * 4 + x] = cells[y * 4 + (3 - x)];
             }
         }
-        let reflected =
-            decide_at(&mirrored, 4, 4, GridPoint::new(2, 2), AmbiguityProfile::Antialiased);
+        let reflected = decide_at(
+            &mirrored,
+            4,
+            4,
+            GridPoint::new(2, 2),
+            AmbiguityProfile::Antialiased,
+        );
 
         assert_ne!(
             original, reflected,

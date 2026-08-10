@@ -362,7 +362,12 @@ impl TraceReport {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp, clippy::field_reassign_with_default)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use super::*;
     use crate::config::{Profile, TraceConfig};
@@ -428,11 +433,13 @@ mod tests {
     fn warnings_carry_codes_and_optional_requirements() {
         let mut r = report();
         assert!(!r.has_warnings());
-        r.warn(Warning::info("palette.assumed_srgb", "no profile was present"));
+        r.warn(Warning::info(
+            "palette.assumed_srgb",
+            "no profile was present",
+        ));
         assert!(!r.has_warnings(), "info is not a warning");
         r.warn(
-            Warning::warn("geometry.polyline_fallback", "chain 4 fell back")
-                .about("PTE-GEO-005"),
+            Warning::warn("geometry.polyline_fallback", "chain 4 fell back").about("PTE-GEO-005"),
         );
         assert!(r.has_warnings());
         assert_eq!(r.warnings[1].requirement.as_deref(), Some("PTE-GEO-005"));
