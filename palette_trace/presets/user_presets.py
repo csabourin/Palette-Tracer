@@ -11,7 +11,7 @@ preset) its exact colours.
 import copy
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from palette_trace.settings import create_palette_entry
@@ -49,7 +49,7 @@ def list_user_presets() -> list[dict]:
     presets = []
     for fpath in p_dir.glob("*.json"):
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
+            with open(fpath, encoding="utf-8") as f:
                 data = json.load(f)
                 if data.get("schemaVersion") == 1:
                     presets.append(data)
@@ -63,7 +63,7 @@ def load_user_preset(preset_uuid: str) -> dict | None:
     """Loads one saved preset by id, or None if it does not exist or is unreadable."""
     file_path = get_user_presets_dir() / f"{preset_uuid}.json"
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return None
@@ -138,7 +138,10 @@ def apply_configuration_patch(settings: dict, patch: dict) -> dict:
     document the preset was saved from would collide with this image's own
     entries.
     """
-    for key in ("destination", "geometry", "globalTraceProfile", "output", "colorProcessing", "alpha"):
+    for key in (
+        "destination", "geometry", "globalTraceProfile",
+        "output", "colorProcessing", "alpha",
+    ):
         if patch.get(key) is not None:
             settings[key] = copy.deepcopy(patch[key])
 
@@ -184,7 +187,7 @@ def save_user_preset(name: str, description: str, settings: dict, scope: str = "
     """Builds a configuration patch from `settings` and saves it as a new preset file."""
     p_dir = get_user_presets_dir()
     puuid = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     preset_obj = {
         "schemaVersion": 1,
         "presetUuid": puuid,

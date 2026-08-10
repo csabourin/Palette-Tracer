@@ -2,23 +2,26 @@
 Image decoding, sRGB conversion, EXIF orientation, and SHA-256 fingerprinting.
 """
 
-import io
 import base64
+import contextlib
 import hashlib
+import io
+
 import numpy as np
 from PIL import Image, ImageOps
-from palette_trace.errors import ImageSourceError
+
 from palette_trace.color.conversion import srgb_array_to_oklch
+from palette_trace.errors import ImageSourceError
+
 
 class DecodedImageSource:
     """Encapsulates decoded raster data, dimensions, and content fingerprint."""
 
     def __init__(self, pil_image: Image.Image, mime_type: str = "image/png"):
-        # Apply EXIF orientation
-        try:
+        # Malformed EXIF is common in the wild and is never a reason to refuse
+        # a picture that decoded: an un-rotated trace beats no trace at all.
+        with contextlib.suppress(Exception):
             pil_image = ImageOps.exif_transpose(pil_image)
-        except Exception:
-            pass
 
         self.mime_type = mime_type
         self.intrinsic_width, self.intrinsic_height = pil_image.size

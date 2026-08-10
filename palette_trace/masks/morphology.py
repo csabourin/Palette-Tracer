@@ -46,6 +46,6 @@ def apply_mask_offset(binary_mask: np.ndarray, offset_px: float) -> np.ndarray:
     """Applies mask offset (positive = dilate, negative = erode)."""
     if offset_px > 0:
         return dilate_mask(binary_mask, offset_px)
-    elif offset_px < 0:
+    if offset_px < 0:
         return erode_mask(binary_mask, abs(offset_px))
     return np.asarray(binary_mask, dtype=bool).copy()

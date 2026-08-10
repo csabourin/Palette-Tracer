@@ -3,12 +3,16 @@ SVG Selection validation and image source resolution.
 """
 
 import os
-from typing import Optional
-import inkex
-from palette_trace.errors import SelectionError, ImageSourceError
-from palette_trace.document.settings_store import PT_NAMESPACE
 
-def validate_and_get_selected_image(svg_root: inkex.SvgDocumentElement, selection: dict) -> inkex.Image:
+import inkex
+
+from palette_trace.document.settings_store import PT_NAMESPACE
+from palette_trace.errors import ImageSourceError, SelectionError
+
+
+def validate_and_get_selected_image(
+    svg_root: inkex.SvgDocumentElement, selection: dict
+) -> inkex.Image:
     """
     Validates that exactly one valid SVG <image> element is selected.
     Returns the target inkex.Image element.
@@ -35,11 +39,12 @@ def validate_and_get_selected_image(svg_root: inkex.SvgDocumentElement, selectio
                 return images[0]
 
     if not isinstance(elem, inkex.Image) and elem.tag != f"{{{inkex.NSS['svg']}}}image":
-        raise SelectionError(f"Selected element is <{elem.tag.rsplit('}', 1)[-1]}>, not an <image>.")
+        tag = elem.tag.rsplit("}", 1)[-1]
+        raise SelectionError(f"Selected element is <{tag}>, not an <image>.")
 
     return elem
 
-def resolve_image_uri(image_elem: inkex.Image, doc_path: Optional[str] = None) -> tuple[str, bool]:
+def resolve_image_uri(image_elem: inkex.Image, doc_path: str | None = None) -> tuple[str, bool]:
     """
     Resolves image href to a local file path or data URI bytes.
     Returns (path_or_data, is_data_uri).
@@ -51,7 +56,7 @@ def resolve_image_uri(image_elem: inkex.Image, doc_path: Optional[str] = None) -
     if href.startswith("data:"):
         return href, True
 
-    if href.startswith("http://") or href.startswith("https://"):
+    if href.startswith(("http://", "https://")):
         raise ImageSourceError("Remote HTTP/HTTPS image URLs are not supported for local tracing.")
 
     # Resolve local file path

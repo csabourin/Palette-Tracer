@@ -11,9 +11,9 @@ import http.client
 import json
 import threading
 import time
+from http.server import ThreadingHTTPServer
 
 import pytest
-from http.server import ThreadingHTTPServer
 
 from palette_trace.server import api
 from palette_trace.server.app_server import (

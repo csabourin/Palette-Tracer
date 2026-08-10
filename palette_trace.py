@@ -16,7 +16,6 @@ import inkex
 
 from palette_trace.diagnostics import generate_diagnostic_report
 from palette_trace.document.generated_groups import commit_generated_trace_group
-from palette_trace.image_source import load_image_source
 from palette_trace.document.selection import (
     resolve_image_uri,
     validate_and_get_selected_image,
@@ -27,6 +26,7 @@ from palette_trace.document.settings_store import (
 )
 from palette_trace.document.transforms import get_image_to_document_transform
 from palette_trace.errors import PaletteTraceError
+from palette_trace.image_source import load_image_source
 from palette_trace.pipeline.controller import PipelineController
 from palette_trace.server.app_server import launch_palette_trace_app
 from palette_trace.server.session import AppSession

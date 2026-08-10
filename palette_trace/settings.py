@@ -11,19 +11,21 @@ import hashlib
 import json
 import uuid
 
+from palette_trace import __version__
+
 #: Custom XML namespace (§10.1). An identifier, not a network endpoint.
 PT_NAMESPACE = "https://christiansabourin.com/ns/palette-trace/1"
 PT_SCHEMA_VERSION = 1
-EXTENSION_VERSION = "1.0.0"
 
-#: Background matching modes (§16.1).
-BACKGROUND_MATCHING_MODES = ("all_matching", "edge_connected", "transparent")
+#: The version stamped into settings provenance (§10.3) and the diagnostic
+#: report (§30). One name for it, so a release cannot half-happen.
+EXTENSION_VERSION = __version__
 
-#: Background output modes (§16.2).
-BACKGROUND_OUTPUT_MODES = ("keep_paths", "omit", "replace_with_rectangle")
-
-#: Geometry policies (§20).
-GEOMETRY_POLICIES = ("stacked", "stacked_trapped", "exclusive_layers", "separate_operations")
+#: The background matching (§16.1), background output (§16.2) and geometry
+#: policy (§20) vocabularies are *not* repeated here. Each one is named by the
+#: module that acts on it — `color.background` and `masks.geometry_policy` —
+#: and constrained by `schemas/image-settings-v1.schema.json`. A third copy of
+#: the same literals would only give them somewhere to drift apart.
 
 DEFAULT_SCAN_COUNT = 4
 

@@ -3,7 +3,6 @@ Geometry-policy tests (SPEC §20, MVP criteria 16-18).
 """
 
 import numpy as np
-import pytest
 
 from palette_trace.masks.geometry_policy import (
     EXCLUSIVE_LAYERS,

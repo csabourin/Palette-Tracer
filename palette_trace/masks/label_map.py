@@ -2,8 +2,8 @@
 2D Integer Label Map for memory-efficient pixel classification.
 """
 
-from typing import Dict, List, Optional
 import numpy as np
+
 
 class LabelMap:
     """
@@ -20,18 +20,13 @@ class LabelMap:
         dtype = np.uint16 if len(entry_ids) > 250 else np.uint8
         self.data = np.zeros((height, width), dtype=dtype)
 
-    def set_claims(self, claims_grid: np.ndarray):
-        """Populate label map from a 2D grid of string entry IDs or None."""
-        for entry_id, label in self.id_to_label.items():
-            self.data[claims_grid == entry_id] = label
-
     def set_claims_from_indices(self, winners: np.ndarray, entry_ids: list[str]):
         """
         Populate the label map from an index-per-pixel claim array.
 
         `winners` holds the position in `entry_ids` that won each pixel, or -1
-        where nothing did. Preferred over :meth:`set_claims` on real images: it
-        never materialises an object array the size of the picture.
+        where nothing did. Indices rather than id strings keep this off an
+        object array the size of the picture.
         """
         for index, entry_id in enumerate(entry_ids):
             label = self.id_to_label.get(entry_id, 0)

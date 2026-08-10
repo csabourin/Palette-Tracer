@@ -8,13 +8,13 @@ Tests verify:
 """
 
 import pytest
-from palette_trace.color.reach import (
-    get_tolerances_for_reach,
-    calculate_hue_confidence,
-    _load_reach_data,
-)
-from palette_trace.color.conversion import srgb_to_oklch
 
+from palette_trace.color.conversion import srgb_to_oklch
+from palette_trace.color.reach import (
+    _load_reach_data,
+    calculate_hue_confidence,
+    get_tolerances_for_reach,
+)
 
 # --------------------------------------------------------------------------- #
 #  Anchor point tests                                                         #
@@ -154,11 +154,12 @@ class TestReachClaimsIntegration:
     """Higher reach → more pixels claimed."""
 
     def test_higher_reach_claims_more(self):
-        from palette_trace.color.claims import resolve_claimed_pixels
         import numpy as np
 
+        from palette_trace.color.claims import resolve_claimed_pixels
+
         L, C, h = srgb_to_oklch(1.0, 0.0, 0.0)  # red anchor
-        
+
         # Create gradient image: exact red → slightly shifted
         oklch_img = np.zeros((4, 4, 3), dtype=np.float64)
         for i in range(4):

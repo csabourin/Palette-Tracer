@@ -3,13 +3,14 @@ Potrace tracing backend adapter (supports potracer Python binding and potrace CL
 """
 
 import numpy as np
+
+from palette_trace.tracing.normalization import normalize_svg_path_data
 from palette_trace.tracing.protocol import (
-    TraceBackend,
     BackendCapabilities,
+    TraceBackend,
     TraceRequest,
     TraceResult,
 )
-from palette_trace.tracing.normalization import normalize_svg_path_data
 
 
 def _fast_findnext(bitmap: np.ndarray):

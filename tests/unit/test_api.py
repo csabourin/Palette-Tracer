@@ -283,7 +283,10 @@ class TestNearestSourceColor:
         assert call(session, "/api/nearest_source_color", "POST", {"hex": "teal"})[0] == 400
 
     def test_it_needs_a_picture_to_look_in(self, empty_session):
-        assert call(empty_session, "/api/nearest_source_color", "POST", {"hex": "#000000"})[0] == 400
+        status, _ = call(
+            empty_session, "/api/nearest_source_color", "POST", {"hex": "#000000"}
+        )
+        assert status == 400
 
 
 class TestExport:
@@ -387,7 +390,9 @@ class TestSourceChangeResolution:
         session.source_changed = True
         original_scan_count = session.settings["scanCount"]
 
-        status, body = call(session, "/api/resolve_source_change", "POST", {"action": "recalculate"})
+        status, body = call(
+            session, "/api/resolve_source_change", "POST", {"action": "recalculate"}
+        )
 
         assert status == 200
         assert session.source_changed is False
@@ -399,7 +404,9 @@ class TestSourceChangeResolution:
         entry["kind"] = "pinned"
         entry["sourceAnchor"] = {"srgb": "#AA3300"}
 
-        status, body = call(session, "/api/resolve_source_change", "POST", {"action": "reset_automatic"})
+        status, body = call(
+            session, "/api/resolve_source_change", "POST", {"action": "reset_automatic"}
+        )
 
         assert status == 200
         assert body["settings"]["palette"]["entries"][0]["sourceAnchor"] == {"srgb": "#AA3300"}
@@ -409,7 +416,9 @@ class TestSourceChangeResolution:
         session.settings["palette"]["entries"][0]["kind"] = "pinned"
         session.settings["destination"]["id"] = "laser"
 
-        status, body = call(session, "/api/resolve_source_change", "POST", {"action": "destination_defaults"})
+        status, body = call(
+            session, "/api/resolve_source_change", "POST", {"action": "destination_defaults"}
+        )
 
         assert status == 200
         assert all(e["kind"] == "automatic" for e in body["settings"]["palette"]["entries"])
@@ -422,7 +431,9 @@ class TestSourceChangeResolution:
         assert "settings" not in body
 
     def test_unknown_action_is_rejected(self, session):
-        status, body = call(session, "/api/resolve_source_change", "POST", {"action": "not_a_real_action"})
+        status, body = call(
+            session, "/api/resolve_source_change", "POST", {"action": "not_a_real_action"}
+        )
         assert status == 400
 
 
@@ -453,7 +464,9 @@ class TestUserPresetEndpoints:
         assert status == 200
         assert body["settings"]["palette"]["entries"][0]["sourceAnchor"] == {"srgb": "#00FF00"}
 
-        status, body = call(session, "/api/user_presets/delete", "POST", {"presetUuid": preset_uuid})
+        status, body = call(
+            session, "/api/user_presets/delete", "POST", {"presetUuid": preset_uuid}
+        )
         assert status == 200
         assert body["presets"] == []
 
@@ -462,7 +475,9 @@ class TestUserPresetEndpoints:
         assert status == 400
 
     def test_apply_unknown_preset_is_a_404(self, session):
-        status, body = call(session, "/api/user_presets/apply", "POST", {"presetUuid": "no-such-id"})
+        status, body = call(
+            session, "/api/user_presets/apply", "POST", {"presetUuid": "no-such-id"}
+        )
         assert status == 404
 
 

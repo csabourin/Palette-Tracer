@@ -8,10 +8,10 @@ The controller is deliberately backend-neutral (§35): it resolves a backend
 through `BackendRegistry` and never names one.
 """
 
-import uuid
 
 import numpy as np
 
+from palette_trace.color.assignment import NEAREST_AVAILABLE, distribute_unclaimed
 from palette_trace.color.background import (
     ALL_MATCHING,
     ISLAND_HOLE_OR_LAYER,
@@ -23,7 +23,6 @@ from palette_trace.color.background import (
     classify_background,
     classify_background_islands,
 )
-from palette_trace.color.assignment import NEAREST_AVAILABLE, distribute_unclaimed
 from palette_trace.color.claims import resolve_claim_indices
 from palette_trace.color.histogram import (
     build_color_histogram,

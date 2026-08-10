@@ -3,6 +3,7 @@ Color histogram reduction module (6-bit channel quantizing for fast OKLab cluste
 """
 
 import numpy as np
+
 from palette_trace.color.conversion import srgb_array_to_oklch, srgb_to_hex
 
 
@@ -13,7 +14,8 @@ def build_color_histogram(
 ) -> list[dict]:
     """
     Builds a weighted histogram of unclaimed sRGB pixels.
-    Returns list of dicts: [{'oklab': (L,a,b), 'srgb': (r,g,b), 'weight': count, 'packed_srgb': int}]
+    Returns a list of dicts, each holding 'oklab', 'srgb', 'weight' (the pixel
+    count) and 'packed_srgb'.
     """
     shift = 8 - bits_per_channel
     scale = (1 << bits_per_channel) - 1

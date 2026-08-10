@@ -101,7 +101,7 @@ This defect is the direct reason the superseded draft's conclusion was wrong: Po
 * `VTracerAdapter` declares support for `cornerSensitivity`, `curveSmoothing` and `optimization` but passes none of them to `vtracer.convert_image_to_svg_py`. Its capabilities currently overstate what it honours.
 * `PotraceAdapter` does not map `curveSmoothing`.
 * Both adapters hard-code their reported version string rather than reading it from the installed package.
-* AutoTrace and the Inkscape CLI adapter were not evaluated — neither is installable in this environment. §23.7 marks the Inkscape CLI adapter as optional and experimental.
+* AutoTrace and the Inkscape CLI adapter were never evaluated — neither is installable in this environment — and their adapters have since been removed. Both were placeholders: each reported itself available whenever the corresponding binary was on `PATH`, then returned no geometry at all, so on a machine with one of those binaries and neither potrace nor vtracer, automatic selection resolved to a backend that silently traced nothing. Either may be reintroduced once it can actually trace; §23.7 still marks the Inkscape CLI adapter as optional and experimental.
 * A WebAssembly backend, which §23.4 prefers over a Python binding, has not been prototyped.
 
 ## Alternatives considered

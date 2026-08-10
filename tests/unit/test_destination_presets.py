@@ -5,7 +5,6 @@ was loaded but never called, so changing the destination in the interface
 never changed generated geometry.
 """
 
-import pytest
 
 from palette_trace.presets.destination import (
     apply_destination_preset,

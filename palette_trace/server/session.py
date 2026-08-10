@@ -4,7 +4,6 @@ Session token and active document state manager.
 
 import secrets
 import threading
-from typing import Optional
 
 #: How the session's current bitmap arrived. A host that was given a path on
 #: the command line (or an Inkscape `<image>`) can commit back to that
@@ -25,7 +24,7 @@ COMMIT_TO_DOWNLOAD = "download"
 class AppSession:
     """Stores session token and runtime pipeline state."""
 
-    def __init__(self, image_elem=None, doc_path: Optional[str] = None):
+    def __init__(self, image_elem=None, doc_path: str | None = None):
         # 128-bit entropy session token
         self.session_token = secrets.token_hex(16)
         self.image_elem = image_elem

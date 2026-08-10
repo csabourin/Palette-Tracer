@@ -20,7 +20,6 @@ import pytest
 from palette_trace.tracing.conformance.runner import (
     ConformanceReport,
     evaluate_all,
-    run_conformance_suite,
 )
 from palette_trace.tracing.registry import REFERENCE_BACKEND_ID, BackendRegistry
 
@@ -148,7 +147,6 @@ def test_solid_shape_does_not_produce_a_full_frame_path(backend_id):
     Potrace treats samples *below* blacklevel as foreground, so the background
     was traced and every scan gained a path covering the whole image.
     """
-    import numpy as np
 
     from palette_trace.tracing.conformance import fixtures
 

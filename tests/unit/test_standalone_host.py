@@ -3,7 +3,6 @@ Standalone host tests (SPEC §9.4).
 """
 
 import json
-import re
 import subprocess
 import sys
 

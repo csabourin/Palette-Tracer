@@ -44,7 +44,10 @@ def check_backend_protocol(gate: Gate) -> None:
     print("\n[1/8] Backend protocol (§23.1)")
     try:
         from palette_trace.tracing.protocol import (
-            BackendCapabilities, TraceBackend, TraceRequest, TraceResult,
+            BackendCapabilities,
+            TraceBackend,
+            TraceRequest,
+            TraceResult,
         )
     except ImportError as exc:
         gate.record("Backend protocol", False, str(exc))
@@ -165,7 +168,10 @@ def check_colour_model(gate: Gate) -> None:
     print("\n[5/8] Colour model (§21.1, §13.4)")
     try:
         from palette_trace.color.conversion import (
-            hex_to_srgb, oklab_to_srgb, oklch_to_oklab, srgb_to_oklch,
+            hex_to_srgb,
+            oklab_to_srgb,
+            oklch_to_oklab,
+            srgb_to_oklch,
         )
     except ImportError as exc:
         gate.record("OKLCH conversion", False, str(exc))
@@ -190,7 +196,7 @@ def check_colour_reach(gate: Gate) -> None:
         gate.record("Colour reach", False, str(exc))
         return
 
-    tolerances = [get_tolerances_for_reach(v) for v in range(0, 101)]
+    tolerances = [get_tolerances_for_reach(v) for v in range(101)]
     monotonic = all(
         b["hue"] >= a["hue"] and b["chroma"] >= a["chroma"] and b["lightness"] >= a["lightness"]
         for a, b in zip(tolerances, tolerances[1:])
@@ -222,7 +228,7 @@ def check_decision_record(gate: Gate) -> None:
         gate.record("Decision record exists", False, f"missing {path}")
         return
 
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         text = handle.read()
 
     gate.record("Decision record exists", True, os.path.relpath(path, REPO_ROOT))

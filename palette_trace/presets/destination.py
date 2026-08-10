@@ -24,7 +24,7 @@ _FALLBACK_ID = "illustration"
 def _load() -> dict:
     global _DEST_PRESETS
     if _DEST_PRESETS is None:
-        with open(_DEST_FILE, "r", encoding="utf-8") as f:
+        with open(_DEST_FILE, encoding="utf-8") as f:
             _DEST_PRESETS = json.load(f)["destinations"]
     return _DEST_PRESETS
 

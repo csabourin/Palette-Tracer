@@ -30,7 +30,7 @@ Pre-release, under active development. See [docs/IMPLEMENTATION_STATUS.md](docs/
 
 ## Requirements
 
-* Python 3.9 or newer
+* Python 3.11 or newer
 * Inkscape 1.2+ (for extension mode only)
 * A modern browser (for the interface, in either mode)
 

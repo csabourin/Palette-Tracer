@@ -4,7 +4,6 @@ Reach tolerance mapping and neutral color guardrail calculations.
 
 import json
 from pathlib import Path
-from palette_trace.color.conversion import shortest_hue_distance
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _REACH_FILE = _DATA_DIR / "reach_mapping_v1.json"
@@ -14,7 +13,7 @@ _REACH_DATA = None
 def _load_reach_data():
     global _REACH_DATA
     if _REACH_DATA is None:
-        with open(_REACH_FILE, "r", encoding="utf-8") as f:
+        with open(_REACH_FILE, encoding="utf-8") as f:
             _REACH_DATA = json.load(f)["anchors"]
     return _REACH_DATA
 
@@ -31,7 +30,8 @@ def get_tolerances_for_reach(overall_reach: int) -> dict:
         a1 = anchors[i]
         a2 = anchors[i + 1]
         if a1["reach"] <= reach <= a2["reach"]:
-            t = (reach - a1["reach"]) / float(a2["reach"] - a1["reach"]) if a2["reach"] != a1["reach"] else 0.0
+            span = float(a2["reach"] - a1["reach"])
+            t = (reach - a1["reach"]) / span if span else 0.0
             return {
                 "hue": a1["hue"] + t * (a2["hue"] - a1["hue"]),
                 "chroma": a1["chroma"] + t * (a2["chroma"] - a1["chroma"]),

@@ -4,14 +4,16 @@ Guarantees 100% zero-dependency execution if no external libraries/binaries are 
 """
 
 import numpy as np
+
+from palette_trace.masks.components import label_connected_components
+from palette_trace.tracing.normalization import normalize_svg_path_data
 from palette_trace.tracing.protocol import (
-    TraceBackend,
     BackendCapabilities,
+    TraceBackend,
     TraceRequest,
     TraceResult,
 )
-from palette_trace.tracing.normalization import normalize_svg_path_data
-from palette_trace.masks.components import label_connected_components
+
 
 class PythonContourAdapter(TraceBackend):
     """Pure-Python fallback boundary tracer."""
@@ -94,16 +96,22 @@ class PythonContourAdapter(TraceBackend):
                             next_pt = None
                             for dy, dx in ((-1, 0), (0, 1), (1, 0), (0, -1)):
                                 ny, nx = cy + dy, cx + dx
-                                if 0 <= ny < height and 0 <= nx < width and comp_mask[ny, nx]:
-                                    if (ny, nx) not in visited_boundary:
-                                        # Edge check
-                                        edge = any(
-                                            not (0 <= ny + ey < height and 0 <= nx + ex < width) or not comp_mask[ny + ey, nx + ex]
-                                            for ey, ex in ((-1, 0), (1, 0), (0, -1), (0, 1))
-                                        )
-                                        if edge:
-                                            next_pt = (ny, nx)
-                                            break
+                                if (
+                                    0 <= ny < height and 0 <= nx < width
+                                    and comp_mask[ny, nx]
+                                    and (ny, nx) not in visited_boundary
+                                ):
+                                    # Only follow neighbours that are themselves
+                                    # on the boundary, so the walk traces the
+                                    # outline rather than filling the interior.
+                                    on_edge = any(
+                                        not (0 <= ny + ey < height and 0 <= nx + ex < width)
+                                        or not comp_mask[ny + ey, nx + ex]
+                                        for ey, ex in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                                    )
+                                    if on_edge:
+                                        next_pt = (ny, nx)
+                                        break
                             if next_pt is None:
                                 break
                             cy, cx = next_pt
