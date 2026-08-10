@@ -15,6 +15,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
+from palette_trace.errors import PaletteTraceError
 from palette_trace.server import api
 from palette_trace.server.app_server import (
     MAX_REQUEST_BYTES,
@@ -403,6 +404,107 @@ class TestShutdown:
         hosting.join(timeout=5)
         assert not hosting.is_alive()
         assert outcome == [False]
+
+
+class TestFailuresAreStillAnswered:
+    """
+    §9.1's surface is JSON, and the interface reads a reply it cannot parse as
+    "something other than Palette Trace answered". A handler that raised used to
+    make that literally true and entirely misleading at the same time:
+    `BaseHTTPRequestHandler` sends nothing at all for an exception, so the
+    browser got an empty reply on loopback and the reverse proxy's own 404 page
+    on a hosted deployment — blaming the address instead of the fault.
+    """
+
+    def post(self, httpd, session, path="/api/user_presets", body="{}"):
+        conn = connect(httpd)
+        conn.request(
+            "POST", path, body=body,
+            headers={"Content-Type": "application/json",
+                     "X-Session-Token": session.session_token},
+        )
+        response = conn.getresponse()
+        payload = json.loads(response.read())
+        conn.close()
+        return response.status, payload
+
+    def test_an_unexpected_exception_answers_in_json(self, server, monkeypatch, capfd):
+        httpd, session = server
+
+        def _raise(*_args, **_kwargs):
+            raise RuntimeError("something gave way")
+
+        monkeypatch.setattr("palette_trace.server.app_server.handle_api_request", _raise)
+
+        status, payload = self.post(httpd, session)
+
+        assert status == 500
+        assert "RuntimeError" in payload["error"]
+        # The console keeps the detail the browser is not given.
+        assert "something gave way" in capfd.readouterr().err
+
+    def test_the_message_the_browser_gets_carries_no_local_path(self, server, monkeypatch):
+        """§9.1: local filesystem paths stay out of browser-visible data."""
+        httpd, session = server
+
+        def _raise(*_args, **_kwargs):
+            raise OSError(30, "Read-only file system: '/home/runner/.config/palette-trace'")
+
+        monkeypatch.setattr("palette_trace.server.app_server.handle_api_request", _raise)
+
+        _status, payload = self.post(httpd, session)
+        assert "/home/runner" not in payload["error"]
+
+    def test_a_described_refusal_is_passed_on_verbatim(self, server, monkeypatch):
+        """
+        A `PaletteTraceError` is a sentence written for the user — an unwritable
+        preset folder, an unreadable picture — so it reaches them intact.
+        """
+        httpd, session = server
+
+        def _raise(*_args, **_kwargs):
+            raise PaletteTraceError("Nothing was saved.")
+
+        monkeypatch.setattr("palette_trace.server.app_server.handle_api_request", _raise)
+
+        status, payload = self.post(httpd, session)
+        assert status == 400
+        assert payload["error"] == "Nothing was saved."
+
+    def test_running_out_of_memory_says_so(self, server, monkeypatch, capfd):
+        """
+        The full-resolution trace behind an export is the largest allocation the
+        session makes, and a small container is where it fails.
+        """
+        httpd, session = server
+
+        def _raise(*_args, **_kwargs):
+            raise MemoryError()
+
+        monkeypatch.setattr("palette_trace.server.app_server.handle_api_request", _raise)
+
+        status, payload = self.post(httpd, session, path="/api/export")
+        capfd.readouterr()
+        assert status == 500
+        assert "memory" in payload["error"].lower()
+
+    def test_a_failing_get_is_answered_too(self, server, monkeypatch, capfd):
+        httpd, session = server
+
+        def _raise(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("palette_trace.server.app_server.handle_api_request", _raise)
+
+        conn = connect(httpd)
+        conn.request("GET", "/api/session", headers={"X-Session-Token": session.session_token})
+        response = conn.getresponse()
+        payload = json.loads(response.read())
+        conn.close()
+        capfd.readouterr()
+
+        assert response.status == 500
+        assert payload["error"]
 
 
 class TestTokenGate:

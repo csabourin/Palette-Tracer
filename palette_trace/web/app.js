@@ -463,9 +463,14 @@ async function api(path, { method = "GET", body, quiet = false } = {}) {
   }
 
   if (data === null) {
+    // The server answers every /api/ request in JSON, including the ones that
+    // fail — so a reply that will not parse did not come from it. The likeliest
+    // reason by far is that it is no longer there: a stopped process leaves the
+    // proxy in front of it answering on its own behalf, usually with a 404 that
+    // reads as though the address were wrong when it never was.
     const message = `${path} was answered by something other than Palette Trace `
-      + `(HTTP ${res.status}). Check the address you opened, and anything sitting `
-      + `in front of the server.`;
+      + `(HTTP ${res.status}). The server may have stopped — check the console `
+      + `it is running in, then reload this page.`;
     if (!quiet) showAlert(message);
     throw new Error(message);
   }

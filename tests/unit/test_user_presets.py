@@ -2,8 +2,11 @@
 Saved user preset tests (SPEC §26, §8.3).
 """
 
+from pathlib import Path
+
 import pytest
 
+from palette_trace.errors import PaletteTraceError
 from palette_trace.presets.user_presets import (
     apply_configuration_patch,
     build_configuration_patch,
@@ -41,6 +44,40 @@ def pinned_settings():
 class TestDirectoryIsolation:
     def test_presets_dir_is_under_the_fake_home(self, tmp_path):
         assert str(get_user_presets_dir()).startswith(str(tmp_path))
+
+
+class TestUnwritableStorage:
+    """
+    A desktop home directory is writable and none of this ever runs. A container
+    is where it does not — a read-only image, or a `$HOME` the process does not
+    own — and saving settings is the first thing the user notices. The failure
+    has to arrive as a sentence, because anything else escapes the request
+    handler and the browser is told a proxy answered instead.
+    """
+
+    def test_a_folder_that_cannot_be_created_is_described(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            Path, "mkdir",
+            lambda *a, **k: (_ for _ in ()).throw(PermissionError(13, "Permission denied")),
+        )
+        with pytest.raises(PaletteTraceError, match="Permission denied"):
+            get_user_presets_dir()
+
+    def test_a_preset_that_cannot_be_written_is_described(self, pinned_settings, monkeypatch):
+        def _refuse(*_args, **_kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr("builtins.open", _refuse)
+        with pytest.raises(PaletteTraceError, match="No space left on device"):
+            save_user_preset("Brand palette", "", pinned_settings, scope="full")
+
+    def test_the_message_names_the_preset_the_user_was_saving(self, pinned_settings, monkeypatch):
+        def _refuse(*_args, **_kwargs):
+            raise OSError(30, "Read-only file system")
+
+        monkeypatch.setattr("builtins.open", _refuse)
+        with pytest.raises(PaletteTraceError, match="OnePiece"):
+            save_user_preset("OnePiece", "", pinned_settings, scope="full")
 
 
 class TestSaveAndList:

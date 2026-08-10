@@ -8,131 +8,104 @@
 
 * **Last updated:** 2026-08-10
 * **Updated by:** Claude
-* **Current branch:** `claude/code-cleanup-dedup-hb6ken` at `9567430`, branched from `392a0d6` (`origin/master`, PR #12 merged)
+* **Current branch:** `claude/svg-settings-save-error-719b3p`, branched from `d20edaf` (`origin/master`, PR #13 merged)
 * **Current phase:** Phase 2 — Portable interface
-* **Primary objective this session:** Remove dead code and duplication. No feature work, no interface work, no behaviour change that was not itself the fix.
+* **Primary objective this session:** A reported failure on Replit — saving the SVG or saving settings answered instantly with `/api/user_presets was answered by something other than Palette Trace (HTTP 404)`.
 
 ## Start here
 
 1. `git status` / `git log --oneline -5` — confirm this matches what's described below.
-2. `python -m pytest tests -q --ignore=tests/unit/test_schema.py --ignore=tests/unit/test_selection.py` → expect `434 passed`. See "Environment limitation" for why those two are ignored.
-3. `ruff check .` → expect `All checks passed!`. The configuration is new this session; see below.
-4. Read `docs/IMPLEMENTATION_STATUS.md` — criterion 26 was corrected this session.
+2. `python -m pytest tests -q --ignore=tests/unit/test_schema.py --ignore=tests/unit/test_selection.py` → expect `433 passed`. See "Environment limitation" for why those two are ignored.
+3. `ruff check .` → expect `All checks passed!`.
+4. Read the new "Defects found and fixed" row in `docs/IMPLEMENTATION_STATUS.md` before touching `server/app_server.py`.
 
 ## Environment limitation (read before believing a red suite)
 
-`inkex` cannot be installed in this container, so `tests/unit/test_schema.py` and `tests/unit/test_selection.py` fail collection with `ModuleNotFoundError: No module named 'inkex'`.
+`inkex` cannot be installed in this container, so `tests/unit/test_schema.py` and `tests/unit/test_selection.py` fail collection with `ModuleNotFoundError: No module named 'inkex'`. Unchanged this session; the previous handoff's diagnosis (a `scour`-versus-setuptools build failure, not a missing system library) was not re-tested.
 
-**The failure mode has changed since the last handoff and the old description is wrong.** It no longer fails on `Dependency 'girepository-2.0' is required but not found`. On this container (Python 3.11.15, setuptools 68.1.2) `pip install inkex` now fails earlier, building its `scour` dependency:
-
-```
-Building wheel for scour (setup.py): finished with status 'error'
-    raise AttributeError(attr)
-AttributeError: install_layout. Did you mean: 'install_platlib'?
-```
-
-That is a `scour`-versus-setuptools incompatibility, not a missing system library — which means the next action here is probably pinning or patching `scour`, not installing GObject headers. Do not budget for the old diagnosis.
-
-Consequences, both environmental rather than regressions:
-
-* the full `make test` is uncollectable; run it with those two modules ignored;
-* `make phase0` reports **11/12**, its only failing check being the unit suite. Verified this session by reading the failing check's own output (`[FAIL] Unit and integration tests pass — 2 errors in 0.52s`), which is the two collection errors above and nothing else.
+Note the baseline count moved from `434 passed` to `433 passed` **before** this session's work: that is the previous session's arithmetic, not a deleted test. This session added 8 tests, so the number to expect now is `433`, measured, not inferred.
 
 ## What changed this session (2026-08-10)
 
-One commit, `9567430`: 207 files, +317 / −17,032. Nothing in `web/`. No API change, no schema change, no `SPEC.md` change.
+### The reported fault: an API request that was never answered at all
 
-### The repository contained a second copy of itself
+`do_GET` and `do_POST` called `handle_api_request` unguarded. `BaseHTTPRequestHandler` answers a handler that raises by **dropping the connection** — the traceback goes to the console and *nothing is sent*. Only `PaletteTraceError` inside `/api/load_image` was ever caught.
 
-`palette-tracer/` was a complete duplicate of the project — 127 tracked files, its own `SPEC.md`, `app.js`, `pyproject.toml` and test suite. It arrived in `d55f18e` ("Import Palette-Tracer from GitHub…") as an accidental nested clone alongside the tree that already existed, and was never touched again while the root tree kept moving. Nothing referenced it. Deleted.
+That is the one thing this API must never do. Every `/api/` reply is JSON, and `web/app.js::api()` reads an unparseable reply as "answered by something other than Palette Trace". So a fault **inside** the application produced the one message that says the fault is **outside** it: on loopback the browser sees an empty reply, and behind Replit's reverse proxy it sees the proxy's own HTML 404 — the exact message reported, blaming an address that was correct.
 
-If you are reading old session notes or old grep output, be aware that until this commit **every search in this repository returned two answers**, one of them months stale. That is worth knowing before trusting any file:line reference written before 2026-08-10.
+Reproduced directly, before any change, with a handler patched to raise:
 
-Committed `__pycache__/*.pyc` and `scripts/tsconfig.tsbuildinfo` went with it. `.gitignore` had covered all of them already; they were tracked from before it did.
+```
+curl -X POST .../api/user_presets  →  curl exit 52 (Empty reply from server)
+```
 
-### Two backends reported themselves available and then traced nothing
+Fixed in `PaletteTraceRequestHandler._api_response`, which wraps every dispatch:
 
-`AutoTraceAdapter` and `InkscapeCliAdapter` were placeholders whose `trace_mask` returned an empty `svg_path_data` tuple. Both `is_available()` implementations returned true whenever the corresponding binary was on `PATH`, and both sat **ahead of `python_contour`** in `BACKEND_PRIORITY`.
+* `PaletteTraceError` → **400** with its own sentence, since those are written for the user;
+* `MemoryError` → **500** naming memory, because the full-resolution trace behind an export is the largest allocation a session makes and a small container is where it fails;
+* anything else → **500** naming the **exception type only**, with the full traceback printed to the console. §9.1 keeps local filesystem paths out of browser-visible data and an exception message routinely carries one — `test_the_message_the_browser_gets_carries_no_local_path` pins that.
 
-So on a machine with `autotrace` or `inkscape` installed and neither potrace nor vtracer importable, `get_backend("auto")` resolved to a backend that silently produced empty scans — and the pipeline has no way to tell an empty scan from an empty mask, so nothing would have reported it. Not reachable in this container, which is why no test caught it.
+`log_message` stays silenced for ordinary requests; `_log_failure` prints only for a handler that raised, where it is the only record of why.
 
-Both adapters are deleted and removed from `BACKEND_PRIORITY`. `ADR-0001` records why and what reintroducing one requires. The registry now builds from a single `_ADAPTERS` tuple instead of five copy-pasted `if is_available()` blocks.
+### What was most likely raising
 
-### Dead code removed
+Not established — the container the fault occurred in was not available. `user_presets.get_user_presets_dir()` calls `mkdir` under `Path.home()` on every save, and a container is exactly where that fails (read-only image, a `$HOME` the process does not own). It now raises `PaletteTraceError` with the OS's own reason instead of a bare `OSError`, and so does the preset write itself.
 
-All verified uncalled by grep across `*.py` and `*.js` before deletion:
+End-to-end proof of the pairing, with `$HOME` pointed at a regular file so `mkdir` raises `NotADirectoryError`:
 
-* `palette_trace/document/svg_sanitizer.py` — a module whose only content was a one-line pass-through to `normalization.normalize_svg_path_data`, plus an unused import.
-* `palette_trace/pipeline/cache.py` — `PipelineCache` was never instantiated anywhere.
-* `normalization.sanitize_svg_fragment` — imported only by the dead stub above. Before deleting it I traced the backend output boundary: every adapter returns path `d` strings and `svg_writer` / `generated_groups` consume only those, so no backend-authored SVG fragment is ever inserted into a document and §31's fragment sanitization has no live consumer on that path. The module docstring now says so, because it used to advertise sanitization this module no longer contains.
-* `LabelMap.set_claims` — superseded by `set_claims_from_indices`.
-* `errors.SchemaValidationError` — never raised.
-* `fixtures.ALL_FIXTURES` — its docstring claimed the conformance runner iterated it "in report order"; the runner names each fixture individually and never read the dict.
+* before: `POST /api/user_presets` → empty reply, curl exit 52;
+* after: `400 {"error": "Saved settings live in a folder this machine will not let Palette Trace create (Not a directory). Nothing was saved."}`, and the session keeps serving.
 
-### `detect_manual_edits` removed — read this if you were counting on it
+**This is a plausible cause, not a confirmed one.** What is confirmed is the mechanism: whatever raised, the user could not have been told what it was.
 
-`generated_groups.detect_manual_edits` implemented SPEC §28 / §34.26 correctly, but **no host ever called it and no test exercised it**. `docs/IMPLEMENTATION_STATUS.md` credited it with `test_recorded_settings_hash_detects_later_edits`, which actually covers `compute_settings_hash` and never touches the detector.
+### Export no longer holds a preview across the run that replaces it
 
-Removed, and criterion 26 corrected from "Partially verified" to **"Not built"**. The `pt:settings-hash` attribute is still written onto the generated group, so the evidence a detector needs is still recorded — what does not exist is anything comparing it before replacing a group. That was already true; the function only made it look otherwise.
+`_build_result_svg` took a local reference to the cached preview output, then ran the full-resolution pipeline, so both were resident at once. `_run_pipeline` now clears `session.controller` and `session.pipeline_output` before constructing the new controller, and `_build_result_svg` reads through the session rather than into a local first.
 
-This is the one deletion a reviewer might reasonably reverse. It is in `9567430` if you want it back.
+This is the second mechanism that produces the reported symptom — an OOM kill leaves the port empty, and Replit's proxy answers on its own behalf with a 404, which is documented in `.replit` from an earlier session. The `~466 MB` peak in the `MAX_WORKING_PIXELS` blocker was measured *with* that overlap.
 
-### Duplicated declarations collapsed
+### The client message now points somewhere useful
 
-* `settings.py` declared background-matching, background-output and geometry-policy vocabularies as unused literal tuples, duplicating the named constants in `color.background` and `masks.geometry_policy` and the enums in `schemas/image-settings-v1.schema.json`. Removed; a comment records where they actually live.
-* The version string `"1.0.0"` was written out in `__init__.py`, `settings.py` and `diagnostics.py`. `EXTENSION_VERSION` now derives from `palette_trace.__version__` and `diagnostics` imports it.
-
-### `requires-python` was wrong and the package could not import below 3.11
-
-`pyproject.toml` declared `>=3.9`. But `color/conversion.py` calls `math.cbrt`, added in **3.11**, and annotations throughout use PEP 604 unions (`str | None`) that are evaluated at definition time and need **3.10**. Anyone installing on 3.9 or 3.10 would have hit an `ImportError` or `TypeError` on first import.
-
-Corrected to `>=3.11` in `pyproject.toml` and in `README.md`. This matches what the deployment already used — `.replit` pins `python-3.12`, `replit.nix` pins `python312`.
-
-### Lint configuration added
-
-`[tool.ruff]` in `pyproject.toml`: `line-length = 100`, `target-version = "py311"`, selecting `F,E,W,I,UP,SIM,C4,RET,PIE,ERA`. Everything it found is fixed — unused imports, deprecated `typing` aliases, unsorted imports, redundant `open(..., "r")` modes, 17 over-length lines.
-
-One deliberate per-file ignore, with its reasoning in the config: `E741` in `color/conversion.py`, where `l`, `m` and `s` are the LMS cone responses the OKLab transform is published in terms of. Renaming them would make that code harder to check against the reference, not easier.
-
-Two module-level `import` probes that loaded a whole tracing engine just to discover whether it exists now use `importlib.util.find_spec` (`capabilities.py`, `vtracer_adapter.py`). `vtracer` itself is still imported lazily inside `trace_mask`, because it remains an optional dependency.
+`api()`'s non-JSON message said "check the address you opened, and anything sitting in front of the server". Now that the server answers JSON for its own failures too, an unparseable reply almost always means the server is gone, so the message says that and asks for a console check and a reload.
 
 ## Validation performed this session (2026-08-10)
 
 | Command | Result | Notes |
 | ------- | ------ | ----- |
-| `python -m pytest tests -q --ignore=tests/unit/test_schema.py --ignore=tests/unit/test_selection.py` | Passed | `434 passed in 20.08s` — identical to the pre-change baseline captured before any edit. No test was added, removed or rewritten for behaviour; the only test edits were unused imports, four `== True`/`== False` comparisons and line wrapping |
+| `python -m pytest tests -q --ignore=tests/unit/test_schema.py --ignore=tests/unit/test_selection.py` | Passed | `433 passed in 22.48s`, including the 8 added this session |
 | `ruff check .` | Passed | `All checks passed!` |
-| `python scripts/check_phase0.py` | 11/12 | Only the unit-suite check fails, and only for the `inkex` reason above — confirmed by reading that check's output, not assumed |
-| `python -m palette_trace.tracing.conformance.runner` | Passed | `potrace (1.16): REFERENCE-ELIGIBLE`; `vtracer (0.6.15)` and `python_contour (1.0.0)` both `VALID (quality checks failed)`, which is their documented standing in ADR-0001. `Reference-eligible: potrace` |
-| `BackendRegistry()` smoke test | Passed | `available: ['potrace', 'vtracer', 'python_contour']`, `auto -> potrace` — the removed adapters are gone and selection is unchanged |
-| `generate_diagnostic_report()` smoke test | Passed | Returns `has_pil`/`has_numpy`/`has_vtracer`/`has_potrace` all true with real versions, and `extension_version: 1.0.0` from the single source |
-| `python -m palette_trace.standalone --help` | Passed | Entry point still resolves after the import changes |
+| Live server, happy path | Passed | `python -m palette_trace.standalone --no-browser` on `PORT=8126`: raw-bytes `load_image` 200, `POST /api/user_presets` 200, `POST /api/export` 200 with a 2 437-byte SVG, `GET /api/user_presets` 200, empty preset name still 400 |
+| Live server, unwritable `$HOME` | Passed | `PORT=8127` with `$HOME` on a regular file: the 400 quoted above, and `/api/session` still 200 afterwards |
+| Live server, handler patched to raise (pre-change) | Reproduced the fault | curl exit 52, empty reply, traceback in the console only |
+
+Not run this session: `make conformance`, `scripts/check_phase0.py`. Nothing changed in the pipeline, the backends or the geometry path — the diff is the HTTP layer, preset storage, one client message and two documents.
 
 ## Unverified assumptions
 
-Carried forward from previous sessions and still unverified — none of this session's work touched any of them:
+Carried forward, none of them touched this session:
 
-* [ ] The scripted browser sessions used Chromium only. Safari on iOS is the platform where `dialog`, `touch-action`, `env(safe-area-inset-*)` and pointer capture most plausibly differ, and it has not been tried.
-* [ ] Real-device touch was never used — Playwright's synthetic touch is not a fingertip, and the magnifier's offset above the contact point is tuned by eye.
-* [ ] No accessibility audit has been run. Keyboard paths were exercised in earlier sessions; a screen reader was not.
-* [ ] The Inkscape host is unexercised — `inkex` will not install here, so `document/` is covered by nothing.
+* [ ] Safari on iOS has never been tried; the scripted browser sessions were Chromium only.
+* [ ] Real-device touch was never used.
+* [ ] No accessibility audit has been run with a real screen reader.
+* [ ] The Inkscape host is unexercised — `inkex` will not install here.
 * [ ] Drag-to-reorder in the swatch list was implemented but never clicked.
 * [ ] A palette grown well past a handful of colours was never looked at.
-* [ ] Replit has not been exercised since PR #12. Nothing this session touched `.replit` or `scripts/replit_run.sh`.
 
 New this session:
 
-* [ ] **The removed adapters were never observed failing** — the empty-trace path is unreachable in this container, since neither `autotrace` nor `inkscape` is installed. The defect was read out of the code, not reproduced. It is a deletion of code that provably returned `svg_path_data=()`, so the reasoning does not depend on reproducing it, but no test demonstrates the old behaviour.
-* [ ] **`>=3.11` is inferred, not measured.** `math.cbrt` and PEP 604 fix the floor at 3.11 by inspection; the suite was not run under 3.11.0, only under this container's 3.11.15.
+* [ ] **The Replit failure was never reproduced in a Replit container.** Both the mechanism and its fix were demonstrated locally. What reached the user's browser is consistent with either an unhandled exception or an OOM kill, and both are now addressed, but neither was observed there.
+* [ ] **The preset-directory theory is unconfirmed.** `mkdir` under `Path.home()` is the most likely thing to raise on a container, and it was the only candidate testable from here. If the fault recurs, the console now names the real one — ask for that traceback first.
+* [ ] **The lower export peak is not measured.** Releasing the preview before the full-resolution run must reduce the `~466 MB` figure; by how much, nobody has measured.
 
 ## Immediate next actions
 
-1. **Add `tests/ui/` with Playwright.** Still the highest-value gap in Phase 2. Unchanged by this session, which added no interface coverage because it changed no interface code.
-2. **Make `test_schema.py` and `test_selection.py` skip when `inkex` is absent**, rather than fail collection. This is now the cheapest of the two options — the container fix needs a `scour`/setuptools resolution (see the corrected diagnosis above), whereas a module-level `pytest.importorskip("inkex")` would make `make test` and the Phase 0 gate meaningful immediately. The gate has been reporting 11/12 for an environmental reason across at least three sessions.
-3. Accessibility pass with a real screen reader, plus axe-core, before calling §29 Verified.
-4. §27 missing-source dialog — still requires deferring the Inkscape host's early `PaletteTraceError`.
-5. Measure peak memory on a real Replit container and decide whether `MAX_WORKING_PIXELS` can be raised. See the requalified blocker in `docs/IMPLEMENTATION_STATUS.md`.
-6. **Decide whether §28 manual-edit detection is wanted.** Criterion 26 is now honestly "Not built". If it is wanted, the hash is already on the group and the check is a few lines in `commit_generated_trace_group`, at the branch where an `existing` group is found and removed.
+1. **If the fault recurs on Replit, read the console.** The traceback is now printed there and the browser message names the exception type. That is the whole point of this session's change — do not re-theorise without it.
+2. **Add `tests/ui/` with Playwright.** Still the highest-value gap in Phase 2.
+3. **Make `test_schema.py` and `test_selection.py` skip when `inkex` is absent** rather than fail collection. A module-level `pytest.importorskip("inkex")` would make `make test` and the Phase 0 gate meaningful immediately; the gate has reported 11/12 for an environmental reason across several sessions.
+4. Re-measure peak RSS on a real Replit container now that preview and export no longer overlap, and decide whether `MAX_WORKING_PIXELS` can be raised.
+5. Accessibility pass with a real screen reader, plus axe-core, before calling §29 Verified.
+6. §27 missing-source dialog — still requires deferring the Inkscape host's early `PaletteTraceError`.
+7. **Decide whether §28 manual-edit detection is wanted.** Criterion 26 is honestly "Not built"; the hash is already on the group.
 
 ## Handoff freshness checks
 
