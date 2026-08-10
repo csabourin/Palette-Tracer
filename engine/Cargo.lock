@@ -210,6 +210,11 @@ version = "0.1.0"
 [[package]]
 name = "palette-tracer-segment"
 version = "0.1.0"
+dependencies = [
+ "palette-tracer-color",
+ "palette-tracer-core",
+ "proptest",
+]
 
 [[package]]
 name = "palette-tracer-svg"
@@ -218,6 +223,11 @@ version = "0.1.0"
 [[package]]
 name = "palette-tracer-topology"
 version = "0.1.0"
+dependencies = [
+ "palette-tracer-color",
+ "palette-tracer-core",
+ "proptest",
+]
 
 [[package]]
 name = "palette-tracer-wasm"

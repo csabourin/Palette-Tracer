@@ -318,11 +318,16 @@ impl Topology {
         self.vertices.iter().filter(|v| v.is_junction()).count()
     }
 
-    /// Total holes across all faces (§26.3).
+    /// Total holes across the interior faces (§26.3).
+    ///
+    /// The exterior face's cycles are excluded. Every one of them is a hole by
+    /// the signed-area test -- the image sits *inside* the exterior -- and
+    /// counting them would report a hole for every component of the artwork.
     #[must_use]
     pub fn hole_count(&self) -> usize {
         self.faces
             .iter()
+            .filter(|f| !f.exterior)
             .flat_map(|f| &f.cycles)
             .filter(|c| c.kind == CycleKind::Hole)
             .count()

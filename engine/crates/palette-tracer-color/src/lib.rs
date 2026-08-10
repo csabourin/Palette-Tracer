@@ -16,6 +16,10 @@
 //!    none (§7.6).
 //! 6. [`stats`] maintains the sufficient statistics region merging needs
 //!    (§7.7).
+//! 7. [`mixture`] estimates two- and multi-colour coverage (§10.2, §10.4).
+//!    It lives here rather than in the geometry crate because it is colour
+//!    mathematics and because two stages need it: fringe detection (§8.6) and
+//!    boundary refinement (§10.2).
 //!
 //! # What this crate is not
 //!
@@ -34,6 +38,7 @@
 
 pub mod alpha;
 pub mod auto;
+pub mod mixture;
 pub mod palette;
 pub mod sampler;
 pub mod spaces;
@@ -41,6 +46,7 @@ pub mod stats;
 
 pub use alpha::{ALPHA_CHANNEL_WEIGHT, PremulLinearRgba};
 pub use auto::{ColorHistogram, histogram};
+pub use mixture::{Mixture, MixturePolicy, MixtureRejection, barycentric, two_color};
 pub use palette::{Assignment, Match, Palette, PaletteEntry, assign, assign_one};
 pub use sampler::sample_premultiplied;
 pub use spaces::{DELTA_E_CONVENTION, EncodedSrgb, LinearRgb, Oklab, Oklch};
