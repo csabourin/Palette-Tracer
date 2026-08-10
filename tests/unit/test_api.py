@@ -7,13 +7,15 @@ way both hosts drive it, rather than mocking the dispatcher.
 
 import base64
 import io
+import sys
+from io import StringIO
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from palette_trace.image_source import DecodedImageSource
-from palette_trace.server.api import handle_api_request, sample_source_color
+from palette_trace.server.api import _run_pipeline, handle_api_request, sample_source_color
 from palette_trace.server.session import AppSession
 from palette_trace.settings import create_default_settings
 
@@ -574,3 +576,175 @@ class TestPreviewScaling:
                 for token in path.split():
                     if not token.isalpha():
                         assert float(token) <= width + 0.5
+
+
+class TestRunPipelineLogging:
+    """
+    The stderr lines in _run_pipeline are the user's only visibility into what
+    the process was doing when an OOM kill occurs.  These tests pin both the
+    content and the flush ordering so a regression (dropped flush=True, wrong
+    code path, etc.) cannot silently remove that visibility.
+
+    The spy records every write() and flush() call as a tagged tuple in a shared
+    event log.  The fake run_pipeline() appends its own sentinel so we can assert
+    the relative position of each flush against the pipeline boundary.
+
+    Event shapes:
+        ("write", text)   — stream.write() was called with *text*
+        ("flush",)        — stream.flush() was called
+        ("run_pipeline",) — PipelineController.run_pipeline() was entered
+    """
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    class _StderrSpy:
+        """Thin wrapper around StringIO that records write/flush events."""
+
+        def __init__(self, log: list):
+            self._buf = StringIO()
+            self._log = log
+
+        # io.TextIOBase interface expected by print()
+        def write(self, text):
+            self._log.append(("write", text))
+            return self._buf.write(text)
+
+        def flush(self):
+            self._log.append(("flush",))
+            self._buf.flush()
+
+        def getvalue(self):
+            return self._buf.getvalue()
+
+    def _make_fake_controller_class(self, run_pipeline_fn):
+        """Return a drop-in PipelineController whose run_pipeline calls *run_pipeline_fn*."""
+        class FakeController:
+            effective_scale = 1.0
+            is_preview = False
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def run_pipeline(self):
+                return run_pipeline_fn()
+
+        return FakeController
+
+    def _setup(self, monkeypatch, log, extra_run_pipeline_fn=None):
+        """
+        Wire up the spy stderr and a fake PipelineController that appends
+        ("run_pipeline",) to *log* before delegating to *extra_run_pipeline_fn*.
+        Returns the spy so callers can inspect getvalue() if needed.
+        """
+        spy = self._StderrSpy(log)
+
+        def fake_run_pipeline():
+            log.append(("run_pipeline",))
+            if extra_run_pipeline_fn:
+                return extra_run_pipeline_fn()
+            return {"palette_entries": [], "scans": []}
+
+        monkeypatch.setattr(sys, "stderr", spy)
+        monkeypatch.setattr(
+            "palette_trace.server.api.PipelineController",
+            self._make_fake_controller_class(fake_run_pipeline),
+        )
+        return spy
+
+    # ------------------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------------------
+
+    def test_running_message_is_flushed_to_stderr_before_pipeline_runs(
+        self, session, monkeypatch
+    ):
+        """
+        The "running…" line must be flushed before run_pipeline() is entered so
+        it survives an OOM kill that terminates the process mid-pipeline.
+        """
+        log = []
+        self._setup(monkeypatch, log)
+
+        _run_pipeline(session, preview=False)
+
+        # Collect indices of events we care about.
+        running_write_idx = next(
+            (i for i, e in enumerate(log) if e[0] == "write" and "running full-resolution" in e[1]),
+            None,
+        )
+        flush_after_running_idx = next(
+            (i for i, e in enumerate(log) if i > (running_write_idx or -1) and e == ("flush",)),
+            None,
+        )
+        run_pipeline_idx = next(
+            (i for i, e in enumerate(log) if e == ("run_pipeline",)),
+            None,
+        )
+
+        assert running_write_idx is not None, "'running…' was never written to stderr"
+        assert flush_after_running_idx is not None, (
+            "stderr was not flushed after the 'running…' line"
+        )
+        assert run_pipeline_idx is not None, "run_pipeline() was never called"
+        assert flush_after_running_idx < run_pipeline_idx, (
+            f"stderr flush (event {flush_after_running_idx}) did not precede "
+            f"run_pipeline() (event {run_pipeline_idx}); "
+            "the log line may not survive an OOM kill"
+        )
+
+    def test_running_message_includes_image_dimensions(self, session, monkeypatch):
+        """The log line names the bitmap size so the reader knows what was attempted."""
+        log = []
+        spy = self._setup(monkeypatch, log)
+
+        _run_pipeline(session, preview=False)
+
+        output = spy.getvalue()
+        src = session.image_source
+        assert str(src.intrinsic_width) in output
+        assert str(src.intrinsic_height) in output
+
+    def test_done_message_is_flushed_to_stderr_after_pipeline_returns(
+        self, session, monkeypatch
+    ):
+        """
+        The "done" line must be flushed after run_pipeline() returns, and must
+        not be present before it — confirming the pipeline completed normally.
+        """
+        log = []
+        self._setup(monkeypatch, log)
+
+        _run_pipeline(session, preview=False)
+
+        run_pipeline_idx = next(
+            (i for i, e in enumerate(log) if e == ("run_pipeline",)),
+            None,
+        )
+        done_write_idx = next(
+            (i for i, e in enumerate(log) if e[0] == "write" and "pipeline done" in e[1]),
+            None,
+        )
+        flush_after_done_idx = next(
+            (i for i, e in enumerate(log) if i > (done_write_idx or -1) and e == ("flush",)),
+            None,
+        )
+
+        assert run_pipeline_idx is not None, "run_pipeline() was never called"
+        assert done_write_idx is not None, "'done' was never written to stderr"
+        assert flush_after_done_idx is not None, (
+            "stderr was not flushed after the 'done' line"
+        )
+        assert done_write_idx > run_pipeline_idx, (
+            "'done' message appeared before run_pipeline() returned"
+        )
+
+    def test_no_log_lines_are_written_during_a_preview_run(self, session, monkeypatch):
+        """Preview runs are frequent interactive calls; they must not spam stderr."""
+        log = []
+        spy = self._setup(monkeypatch, log)
+
+        _run_pipeline(session, preview=True)
+
+        assert spy.getvalue() == "", "Unexpected stderr output during a preview run"
