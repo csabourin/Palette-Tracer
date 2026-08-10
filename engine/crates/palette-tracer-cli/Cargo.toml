@@ -1,0 +1,21 @@
+[package]
+name = "palette-tracer-cli"
+description = "Command-line front end for the Palette Tracer Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "pte"
+path = "src/main.rs"
+
+[dependencies]
+palette-tracer.workspace = true
+palette-tracer-core.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

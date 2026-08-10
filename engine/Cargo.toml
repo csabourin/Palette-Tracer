@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/palette-tracer-core",
+    "crates/palette-tracer-color",
+    "crates/palette-tracer-segment",
+    "crates/palette-tracer-topology",
+    "crates/palette-tracer-geometry",
+    "crates/palette-tracer-svg",
+    "crates/palette-tracer",
+    "crates/palette-tracer-cli",
+    "crates/palette-tracer-wasm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/csabourin/Palette-Tracer"
+authors = ["Christian Sabourin"]
+
+[workspace.dependencies]
+palette-tracer-core = { path = "crates/palette-tracer-core", version = "0.1.0" }
+palette-tracer-color = { path = "crates/palette-tracer-color", version = "0.1.0" }
+palette-tracer-segment = { path = "crates/palette-tracer-segment", version = "0.1.0" }
+palette-tracer-topology = { path = "crates/palette-tracer-topology", version = "0.1.0" }
+palette-tracer-geometry = { path = "crates/palette-tracer-geometry", version = "0.1.0" }
+palette-tracer-svg = { path = "crates/palette-tracer-svg", version = "0.1.0" }
+palette-tracer = { path = "crates/palette-tracer", version = "0.1.0" }
+
+blake3 = { version = "1", default-features = false }
+kurbo = { version = "0.11", default-features = false, features = ["std"] }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+
+proptest = "1"
+
+# SPEC §35.2. Lints that make the specification's hard rules mechanical rather
+# than a matter of reviewer memory. `cargo clippy -- -D warnings` turns each of
+# these into a build failure.
+[workspace.lints.rust]
+missing_docs = "warn"                # §35.7: public items require rustdoc
+unsafe_code = "deny"                 # PTE-SEC-009: unsafe is denied by default
+
+[workspace.lints.clippy]
+# PTE-DET-002: `==` over floats has no defined NaN behaviour. Comparisons that
+# decide anything go through `core::determinism::TotalOrdKey`.
+float_cmp = "deny"
+# PTE-SEC-008: no input-dependent unwrap/expect in library code. Test modules
+# opt out locally with `#![allow(clippy::unwrap_used)]`.
+unwrap_used = "warn"
+expect_used = "warn"
+missing_panics_doc = "warn"
+missing_errors_doc = "warn"
+# PTE-SEC-005: numeric conversions at image boundaries go through the audited
+# helpers in `palette_tracer_core::checked`, which these lints cannot see. They
+# are allowed here and enforced by review plus the overflow tests instead.
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

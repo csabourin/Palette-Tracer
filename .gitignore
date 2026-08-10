@@ -89,3 +89,5 @@ docs/_build/
 artifacts/
 *.tsbuildinfo
 .vite/
+# Rust engine build artefacts
+engine/target/

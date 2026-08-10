@@ -1,0 +1,22 @@
+[package]
+name = "palette-tracer"
+description = "The Palette Tracer Engine: a deterministic raster-to-SVG engine with one shared boundary graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+palette-tracer-core.workspace = true
+palette-tracer-color.workspace = true
+palette-tracer-segment.workspace = true
+palette-tracer-topology.workspace = true
+palette-tracer-svg.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
