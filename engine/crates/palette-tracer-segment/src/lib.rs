@@ -159,8 +159,10 @@ pub fn segment(
 
     let mut merge_outcome = rag::merge(&mut graph, policy, budget, control)?;
     // PTE-SEG-015: fringe cleanup happens before topology construction, so a
-    // fringe fragment never becomes a face with its own shared boundary.
-    let fringe = rag::reassign_fringe(&mut graph, policy, budget, control)?;
+    // fringe fragment never becomes a face with its own shared boundary. One
+    // reassignment can expose a candidate to its two true neighbours, so sweep
+    // to a fixed point instead of making the result depend on a single pass.
+    let fringe = rag::reassign_fringe_to_fixed_point(&mut graph, policy, budget, control)?;
     merge_outcome.fringe = fringe.clone();
 
     let (labels, region_count) = rag::apply(&graph, &initial.labels)?;

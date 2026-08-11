@@ -789,9 +789,8 @@ impl Engine {
                 control_points,
                 polyline_fallbacks: fit.polyline_fallbacks,
                 svg_bytes: palette_tracer_core::checked::usize_to_u64(svg.len()),
-                coordinate_decimals: palette_tracer_svg::choose_precision(
-                    document,
-                    config.geometry.curve_tolerance_px.max(0.5),
+                coordinate_decimals: palette_tracer_svg::choose_serialization_precision(
+                    document, config,
                 )
                 .unwrap_or(0),
             },

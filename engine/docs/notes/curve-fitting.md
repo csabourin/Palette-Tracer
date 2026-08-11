@@ -202,19 +202,17 @@ depth 10, so no single candidate can consume unbounded work (PTE-GEO-005).
 
 ## Known limitations
 
-1. **Split points are source samples.** A span runs from one sample to another,
-   so a model cannot start or end between them. On a 45° staircase the samples
-   off the ideal diagonal sit `1/√2 ≈ 0.707` px from the chord joining the ones
-   on it, so a tolerance below 0.707 px necessarily splits a staircase that is
-   "really" one line. `flat-illustration` defaults to 0.6 px and produces four
-   or five segments where one would do; at 0.75 px the same chain is one line.
-   Lifting this needs §10.5's boundary optimisation, which can move points off
-   the sample lattice inside a trust region — that is Phase 3's other half and
-   is not implemented.
-2. **No subpixel evidence.** Sample positions come from pixel-cell interfaces.
-   Fitting makes geometry compact and smooth; it does not make it
-   subpixel-accurate. `BoundaryEvidence` stays `crisp_grid` and the report says
-   so.
+1. **Hard-edged split points remain source samples.** §10.5 moves samples only
+   when trusted antialias coverage provides a position. A hard-edged 45°
+   staircase carries only §10.6's uncertainty interval, so its off-diagonal
+   samples remain `1/√2 ≈ 0.707` px from the ideal chord and a tolerance below
+   that still splits a boundary that is "really" one line. The generated
+   `curves/shallow-staircase` fixture is deliberately this case. Optimising
+   crisp evidence inside its uncertainty strip remains unimplemented.
+2. **Subpixel evidence is conditional.** Trusted two-colour coverage is
+   reconstructed and optimised before fitting; crisp and low-confidence samples
+   stay on pixel-cell interfaces. `BoundaryEvidence` and the report distinguish
+   those outcomes. See `subpixel-antialias.md` and the measured §31.2 gates.
 3. **No arcs, no primitives.** §11.4's arc model and §11.7's primitive
    recognition are absent. A circle is a handful of cubics, not a circle.
 4. **Corner detection needs about six pixels of chain.** Fewer than five samples
@@ -223,8 +221,8 @@ depth 10, so no single candidate can consume unbounded work (PTE-GEO-005).
    without pins; the error gates still bind.
 5. **The thresholds are engineering choices.** The corner scales, the 8°
    extrapolation limit, the sweep lookahead and the turning limit are reasoned
-   but not calibrated against a reference corpus, because there is no reference
-   corpus. Same caveat as every other threshold in this build.
+   but have not been selected by a corpus parameter sweep. The synthetic corpus
+   now measures their outcomes; it is not yet a calibration study.
 
 ## Alternatives considered
 

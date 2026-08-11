@@ -28,7 +28,7 @@
 //! Every string that reaches the output goes through [`escape_xml`]. Labels
 //! come from callers and callers can be hostile.
 
-use palette_tracer_core::config::{EffectiveConfig, Precision};
+use palette_tracer_core::config::{BoundarySource, EffectiveConfig, Precision, Profile};
 use palette_tracer_core::error::ValidationError;
 use palette_tracer_core::ir::{
     CurveChain, Element, FillRule, Paint, PathSegment, Point, VectorDocument,
@@ -104,6 +104,35 @@ pub fn choose_precision(
              within {budget} px"
         ),
     })
+}
+
+/// Choose the precision implied by the resolved output and boundary policies.
+///
+/// Coverage reconstruction carries evidence at §31.2's tenth-pixel scale, so
+/// automatic serialisation reserves at most `0.05 px` for rounding it. Crisp
+/// and pixel-art geometry keep the broader fitting budget; integer coordinates
+/// still naturally choose zero decimals.
+///
+/// # Errors
+///
+/// As [`choose_precision`].
+pub fn choose_serialization_precision(
+    document: &VectorDocument,
+    config: &EffectiveConfig,
+) -> Result<u8, ValidationError> {
+    match config.output.precision {
+        Precision::Fixed(decimals) => Ok(decimals.min(MAX_DECIMALS)),
+        _ => {
+            let tolerance = if config.geometry.boundary_source != BoundarySource::CrispGrid
+                && config.profile != Profile::PixelArt
+            {
+                config.geometry.curve_tolerance_px.clamp(1.0e-6, 0.10)
+            } else {
+                config.geometry.curve_tolerance_px.max(0.5)
+            };
+            choose_precision(document, tolerance)
+        }
+    }
 }
 
 // The comparisons here are exact on purpose: "did rounding turn two different
@@ -278,13 +307,7 @@ pub fn serialize(
         });
     }
 
-    let decimals = match config.output.precision {
-        Precision::Auto => choose_precision(document, config.geometry.curve_tolerance_px.max(0.5))?,
-        Precision::Fixed(d) => d.min(MAX_DECIMALS),
-        // `Precision` is `#[non_exhaustive]`; an unknown policy falls back to
-        // the searched one, which is the safe choice rather than a guess.
-        _ => choose_precision(document, config.geometry.curve_tolerance_px.max(0.5))?,
-    };
+    let decimals = choose_serialization_precision(document, config)?;
 
     let newline = if config.output.pretty { "\n" } else { "" };
     let indent = |depth: usize| {
@@ -555,6 +578,29 @@ mod tests {
             decimals >= 3,
             "fine geometry needs decimals, got {decimals}"
         );
+    }
+
+    /// §10 evidence must survive §18.3's final geometry-changing step. The
+    /// general 0.6 px profile budget would permit this quarter-pixel position
+    /// to round back onto the grid; the reconstruction budget must not.
+    #[test]
+    fn automatic_precision_preserves_subpixel_reconstruction() {
+        let subpixel = CurveChain::polyline(&[
+            Point::new(0.24, 0.0),
+            Point::new(0.24, 1.0),
+            Point::new(1.0, 1.0),
+        ])
+        .unwrap();
+        let doc = document(vec![face_of(subpixel, 1)]);
+        let config = config();
+
+        let decimals = choose_serialization_precision(&doc, &config).unwrap();
+        assert!(
+            decimals >= 1,
+            "subpixel evidence needs at least one decimal"
+        );
+        let svg = serialize(&doc, &config).unwrap();
+        assert!(svg.contains("0.2"), "subpixel coordinate was erased: {svg}");
     }
 
     /// Rounding must not collapse two distinct points into one: that deletes a

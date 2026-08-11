@@ -5,7 +5,10 @@
 
 ## Requirements
 
-`PTE-AA-001` through `PTE-AA-009` (§10.1–§10.6). Adjacent: `PTE-SEG-015/016`
+`PTE-AA-001` through `PTE-AA-009` (§10.1–§10.6). `PTE-AA-001` is only partly
+conforming because the real-input compatibility hypothesis estimates coverage
+in encoded sRGB before judging its residual in linear light. Adjacent:
+`PTE-SEG-015/016`
 (§8.6 fringe absorption, which shares the mixture estimator), `PTE-GEO-013`
 (a chain's endpoints do not move), `PTE-TOPO-001` and `PTE-AA-008` (one
 boundary, fitted once, inherited by both faces), `PTE-DET-002/003/004`
@@ -76,6 +79,20 @@ the circle at eight faces after everything else had been absorbed.
 What separates a hairline from a fringe is colour, not shape: a dark line
 between two regions is not a mixture of them, and the residual gate rejects it.
 
+### 1.3 Fringe cleanup is a fixed point
+
+A successful reassignment can expose another thin band to the two semantic
+neighbours needed by §8.6. One raster-order pass therefore does not imply that
+no valid candidate remains. The production entry point repeats the existing
+deterministic ascending-ID sweep until a complete pass emits no audit record.
+
+Each successful pass removes at least one live region, so at most the initial
+region count can succeed. Every pass retains `reassign_fringe`'s cancellation
+checks and work-budget charges; memory is the accumulated PTE-SEG-016 audit
+vector, at most one record per removed region. The empty terminating pass is
+observable in `an_antialias_fringe_is_absorbed_with_an_audit_record`, which also
+closes the former test loophole where an empty first audit vector passed.
+
 ---
 
 ## 2. Estimating the compositing transfer (§10.2)
@@ -90,10 +107,13 @@ linear premultiplied coordinates.
 observation is then linear in *encoded* coordinates, so the coverage is the
 projection there; the prediction is decoded back before the residual is taken.
 
-`PTE-AA-001` holds throughout. Every residual compared, and every residual
-reported, is linear-light premultiplied. Only the parameter search for the
-encoded hypothesis happens in encoded coordinates, because that is what the
-hypothesis *is*; the error metric that judges it never leaves linear light.
+Every residual compared, and every residual reported, is linear-light
+premultiplied. The encoded hypothesis's parameter search nevertheless happens
+in encoded coordinates, because that is what the hypothesis is. This is a
+deliberate compatibility extension that works on common raster output, but it
+does not literally satisfy PTE-AA-001's requirement that mixture *fitting* use
+linear-light values. The implementation status therefore records AA-001 as
+partly conforming rather than treating the linear residual metric as sufficient.
 
 ### 2.1 The asymmetry, and why it is not caution
 
@@ -344,14 +364,20 @@ applies with nothing excluded — the strictest reading available.
 Corpus effect, over the whole §25.2 suite:
 
 ```
-                        before §10          after §10
-circle-subpixel-0    52 lines + 26 cubics   16 lines +  4 cubics   1285 -> 709 bytes
-circle-subpixel-1    66 lines + 14 cubics    8 lines +  6 cubics   1107 -> 677 bytes
+                        before §10          integrated result
+circle-subpixel-0    52 lines + 26 cubics    6 lines +  6 cubics   1285 -> 619 bytes
+circle-subpixel-1    66 lines + 14 cubics    6 lines +  6 cubics   1107 -> 625 bytes
 star-acute-corners  172 lines + 12 cubics   20 lines + 20 cubics   1636 -> 1104 bytes
 rounded-rectangle    58 lines +  8 cubics   12 lines +  8 cubics    892 -> 616 bytes
 ```
 
 Every other fixture is byte-identical.
+
+The fixed-point §8.6 pass is what removes the last residual circle fringe:
+the initial merged §10 implementation stopped at 4/3 faces, while the
+integrated result is the expected 2/2. Coverage inversion then supplies the
+subpixel positions measured by the table above; face reduction alone is not a
+§31.2 accuracy claim.
 
 ---
 
@@ -453,3 +479,16 @@ and nothing under `palette_trace/` was read (PTE-LIC-002, ADR-0003).
 * `an_antialiased_hairline_is_not_absorbed_because_it_is_not_a_mixture`
 
 `crates/palette-tracer/tests/subpixel_gates.rs`, the §31.2 measurement.
+### 6.1 Final serialisation preserves reconstructed evidence
+
+§18.3 is the last geometry-changing step. Its general profile tolerance can be
+larger than §31.2's subpixel budget: at the default `0.6 px`, rounding a recovered
+quarter-pixel position to the grid would still appear permissible. Automatic
+precision therefore reserves at most `0.05 px` for rounding whenever coverage
+reconstruction is enabled. Explicit fixed precision remains the caller's
+declared policy; crisp and pixel-art geometry keep the broader profile budget.
+
+`automatic_precision_preserves_subpixel_reconstruction` proves the emitted SVG,
+not only the typed IR, retains a non-grid coordinate. The report calls the same
+precision selector as the writer, so `coordinate_decimals` describes the bytes
+that were actually emitted (PTE-SVG-007/008).

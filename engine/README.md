@@ -31,13 +31,13 @@ one stream; sending both to `-` is refused rather than concatenated.
 **Early.** Read `docs/IMPLEMENTATION_STATUS.md` before forming an expectation;
 it is written to be believed rather than to be encouraging.
 
-The short version: the colour pipeline, the segmentation, the shared topology,
-§11 curve fitting and the SVG serialiser are built and tested. **Subpixel
-antialias reconstruction is not** (§10), so boundaries are fitted to lines and
-cubics — compact, seam-free, deterministic — but the positions they are fitted
-*to* still come from pixel-cell interfaces. On a clean antialiased circle that
-shows up as eight faces where there should be two; the corpus census in
-`docs/IMPLEMENTATION_STATUS.md` quantifies it.
+The short version: the colour pipeline, segmentation, shared topology, §10
+subpixel reconstruction, §11 curve fitting and the SVG serialiser are built and
+tested. The analytic §31.2 circle gates pass; both corpus circles and the
+antialiased star now have the expected two faces (the star formerly had 47).
+Junction optimisation remains partial:
+§10.4's barycentric weights exist, but junction positions are still pinned.
+See `docs/IMPLEMENTATION_STATUS.md` for the exact claims and gaps.
 
 Arcs, primitive recognition, strokes, gradients and fabrication are not built,
 and asking for them returns an error naming the requirement rather than quietly
@@ -51,6 +51,8 @@ producing something else.
 | `palette-tracer-color` | §7 colour spaces, palettes, reaches, assignment, automatic palettes, mixtures |
 | `palette-tracer-segment` | §8 edge field, minimum-spanning-forest partition, region graph, merging, fringe |
 | `palette-tracer-topology` | §9 label map to shared half-edges, 2×2 ambiguity, validator |
+| `palette-tracer-aa` | §10 coverage inversion, normals, confidence and bounded boundary optimisation |
+| `palette-tracer-geometry` | §11 line/cubic fitting |
 | `palette-tracer-svg` | §18 lowering, serialisation, and a diagnostic rasteriser for the seam gate |
 | `palette-tracer` | The facade: `Engine::{validate_config, analyze, segment, vectorize, trace}` |
 | `palette-tracer-cli` | `pte` |
@@ -67,4 +69,4 @@ governs the Python application; this directory is separately licensed and shares
 no code with it. See `docs/decisions/ADR-0001-workspace-and-licence-shape.md`
 and `ADR-0003-clean-room-provenance.md`.
 
-MSRV 1.90, edition 2024. Built and tested with `rustc 1.94.1`.
+MSRV 1.90, edition 2024. Built and tested with `rustc 1.97.1`.
