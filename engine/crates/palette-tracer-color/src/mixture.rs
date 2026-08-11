@@ -31,6 +31,7 @@
 //! (PTE-LIC-004).
 
 use crate::alpha::{ALPHA_CHANNEL_WEIGHT, PremulLinearRgba};
+use palette_tracer_core::determinism::QuantKey;
 
 /// Why a mixture estimate could not be trusted (Appendix D.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +153,176 @@ pub fn two_color_residual(
         .max(0.0)
         .sqrt();
     Some((coverage, residual))
+}
+
+/// Which compositing transfer the source raster's antialiasing used.
+///
+/// §10.2's model `C = αA + (1 − α)B` is only the right model if the *source*
+/// composited in linear light. Most 2D rasterisers do not: they blend the
+/// transfer-encoded bytes directly. That is arithmetically a different curve,
+/// and fitting a straight line to it produces a systematic error in both the
+/// residual and the coverage, not a random one.
+///
+/// The size of the error is not marginal. For an sRGB-space blend of
+/// `#202634` and `#f7f4ec`, a true coverage of `0.5` projects onto the linear
+/// segment at `0.717`; for `#c63e36` and `#f7f4ec` it projects at `0.676`. Fed
+/// to §10.3's `A_square⁻¹` that is a fifth of a pixel of position error, which
+/// is larger than the grid error §10 exists to remove.
+///
+/// So the transfer is *estimated from the evidence* rather than assumed, by
+/// scoring both hypotheses and keeping the one that explains the observation.
+/// PTE-AA-001 is satisfied throughout: every value compared, and every residual
+/// reported, is linear-light premultiplied. Only the parameter search for
+/// [`Self::EncodedSrgb`] happens in the encoded space, because that is what the
+/// hypothesis *is*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CompositeSpace {
+    /// The source composited in linear light: §10.2's literal model.
+    LinearLight,
+    /// The source composited on transfer-encoded sRGB values.
+    EncodedSrgb,
+}
+
+impl CompositeSpace {
+    /// Stable identifier for the report and the design note.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LinearLight => "linear-light",
+            Self::EncodedSrgb => "encoded-srgb",
+        }
+    }
+}
+
+/// A two-colour estimate together with the transfer that produced it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpacedMixture {
+    /// The estimate, whose `residual` is always in linear-light units.
+    pub mixture: Mixture,
+    /// Which hypothesis won.
+    pub space: CompositeSpace,
+}
+
+/// Alpha below which a premultiplied value carries no recoverable straight
+/// colour, so the encoded hypothesis cannot be formed (PTE-COLOR-009).
+const STRAIGHT_EPSILON: f64 = 1.0e-6;
+
+/// Encode a premultiplied linear sample into the transfer-encoded coordinates
+/// the encoded hypothesis is linear in.
+///
+/// Alpha is *not* transfer-encoded -- no raster format encodes it -- so it
+/// passes through and is carried as the fourth coordinate. Returns `None` when
+/// the straight colour cannot be recovered.
+fn to_encoded_coords(v: PremulLinearRgba) -> Option<[f64; 4]> {
+    let straight = v.to_straight(STRAIGHT_EPSILON)?;
+    let e = straight.to_encoded();
+    Some([e.r, e.g, e.b, v.a])
+}
+
+/// Undo [`to_encoded_coords`].
+fn from_encoded_coords(v: [f64; 4]) -> PremulLinearRgba {
+    let linear = crate::spaces::EncodedSrgb::new(v[0], v[1], v[2]).to_linear();
+    PremulLinearRgba::from_straight(linear, v[3])
+}
+
+/// The linear-light residual of the encoded-space hypothesis, and its coverage.
+///
+/// Under this hypothesis the observation is linear in the *encoded*
+/// coordinates, so the coverage is the projection there. The residual is then
+/// measured after decoding, in linear light, so that it is directly comparable
+/// with [`two_color_residual`]'s.
+#[must_use]
+fn encoded_space_residual(
+    c: PremulLinearRgba,
+    a: PremulLinearRgba,
+    b: PremulLinearRgba,
+    policy: &MixturePolicy,
+) -> Option<(f64, f64)> {
+    let (ce, ae, be) = (
+        to_encoded_coords(c)?,
+        to_encoded_coords(a)?,
+        to_encoded_coords(b)?,
+    );
+
+    let w = [1.0, 1.0, 1.0, policy.alpha_weight];
+    let mut numerator = 0.0;
+    let mut denominator = 0.0;
+    for k in 0..4 {
+        let d = ae[k] - be[k];
+        numerator += w[k] * (ce[k] - be[k]) * d;
+        denominator += w[k] * d * d;
+    }
+    if denominator <= policy.min_separation_squared || !denominator.is_finite() {
+        return None;
+    }
+
+    let coverage = palette_tracer_core::checked::clamp_unit(numerator / denominator);
+    let mut predicted_encoded = [0.0; 4];
+    for k in 0..4 {
+        predicted_encoded[k] = coverage.mul_add(ae[k] - be[k], be[k]);
+    }
+    // PTE-AA-001: the comparison is in linear light, so decode before measuring.
+    let predicted = from_encoded_coords(predicted_encoded);
+    let residual = c
+        .minus(predicted)
+        .weighted_norm_squared(policy.alpha_weight)
+        .max(0.0)
+        .sqrt();
+    Some((coverage, residual))
+}
+
+/// Estimate coverage under both compositing hypotheses and keep the better
+/// (§10.2, PTE-AA-002).
+///
+/// Returns `None` only when *neither* hypothesis can be formed, which means the
+/// endpoints are inseparable. The mixture gates are not applied: like
+/// [`two_color_residual`], the caller compares the residual to its own
+/// threshold, because §8.6 and §10.3 use different ones.
+///
+/// # Determinism
+///
+/// The two residuals are compared through [`QuantKey`], never as bare floats
+/// (PTE-DET-002/003). A tie keeps [`CompositeSpace::LinearLight`], which is
+/// §10.2's stated model, so the spec's default is what a coin-flip resolves to.
+#[must_use]
+pub fn two_color_best(
+    c: PremulLinearRgba,
+    a: PremulLinearRgba,
+    b: PremulLinearRgba,
+    policy: &MixturePolicy,
+) -> Option<SpacedMixture> {
+    let separation_squared = a.minus(b).weighted_norm_squared(policy.alpha_weight);
+
+    let linear = two_color_residual(c, a, b, policy).map(|(coverage, residual)| SpacedMixture {
+        mixture: Mixture {
+            coverage,
+            residual,
+            separation_squared,
+        },
+        space: CompositeSpace::LinearLight,
+    });
+    let encoded =
+        encoded_space_residual(c, a, b, policy).map(|(coverage, residual)| SpacedMixture {
+            mixture: Mixture {
+                coverage,
+                residual,
+                separation_squared,
+            },
+            space: CompositeSpace::EncodedSrgb,
+        });
+
+    match (linear, encoded) {
+        (Some(l), Some(e)) => {
+            let lk = QuantKey::cost_or_worst(l.mixture.residual);
+            let ek = QuantKey::cost_or_worst(e.mixture.residual);
+            // `<` and not `<=`: a tie keeps the linear hypothesis.
+            Some(if ek < lk { e } else { l })
+        }
+        (Some(l), None) => Some(l),
+        (None, Some(e)) => Some(e),
+        (None, None) => None,
+    }
 }
 
 /// Barycentric coverage weights over up to four colours (§10.4).
@@ -507,5 +678,155 @@ mod tests {
             let reverse = two_color(c, b, a, &policy).unwrap();
             prop_assert!((forward.coverage + reverse.coverage - 1.0).abs() < 1e-9);
         }
+    }
+
+    // ---- §10.2 compositing-space estimation -----------------------------
+
+    /// A colour as a rasteriser holds it: transfer-encoded bytes.
+    fn from_bytes(r: u8, g: u8, b: u8) -> PremulLinearRgba {
+        let e = crate::spaces::EncodedSrgb::new(
+            f64::from(r) / 255.0,
+            f64::from(g) / 255.0,
+            f64::from(b) / 255.0,
+        );
+        PremulLinearRgba::from_straight(e.to_linear(), 1.0)
+    }
+
+    /// Blend two colours the way most 2D rasterisers actually do: on the
+    /// transfer-encoded values, without linearising first.
+    fn blend_in_encoded_space(a: [u8; 3], b: [u8; 3], t: f64) -> PremulLinearRgba {
+        let c: Vec<f64> = (0..3)
+            .map(|k| (f64::from(a[k]) * t + f64::from(b[k]) * (1.0 - t)) / 255.0)
+            .collect();
+        let e = crate::spaces::EncodedSrgb::new(c[0], c[1], c[2]);
+        PremulLinearRgba::from_straight(e.to_linear(), 1.0)
+    }
+
+    const INK: [u8; 3] = [32, 38, 52];
+    const PAPER: [u8; 3] = [247, 244, 236];
+    const RED: [u8; 3] = [198, 62, 54];
+
+    /// §10.2 with PTE-AA-002: an antialiased pixel composited on encoded
+    /// values is *not* a linear-light mixture, and the estimator has to notice
+    /// rather than return a confidently wrong coverage.
+    ///
+    /// This is the defect the corpus census was measuring. `curves/star-acute-
+    /// corners` traced to 47 faces because every one of its fringe pixels
+    /// failed §8.6's residual gate by this margin.
+    #[test]
+    fn an_encoded_space_blend_is_recognised_and_its_coverage_recovered() {
+        let a = from_bytes(RED[0], RED[1], RED[2]);
+        let b = from_bytes(PAPER[0], PAPER[1], PAPER[2]);
+        let policy = MixturePolicy::default();
+
+        for target in [0.125, 0.25, 0.5, 0.75, 0.875] {
+            let c = blend_in_encoded_space(RED, PAPER, target);
+            let best = two_color_best(c, a, b, &policy).unwrap();
+
+            assert_eq!(
+                best.space,
+                CompositeSpace::EncodedSrgb,
+                "the encoded hypothesis explains an encoded blend"
+            );
+            assert!(
+                (best.mixture.coverage - target).abs() < 2e-3,
+                "coverage {} should recover {target}",
+                best.mixture.coverage
+            );
+            assert!(
+                best.mixture.residual < 1e-3,
+                "an exact encoded blend leaves no residual, got {}",
+                best.mixture.residual
+            );
+        }
+    }
+
+    /// The other half of the same claim, stated as the size of the error the
+    /// old estimator made. §10.3 turns coverage into a position, so a coverage
+    /// bias of this size is a position error of the same size in pixels --
+    /// larger than the grid error §10 exists to remove.
+    #[test]
+    fn the_linear_hypothesis_alone_is_biased_by_a_fifth_of_a_pixel() {
+        let policy = MixturePolicy::default();
+        for (pair, name) in [(INK, "ink"), (RED, "red")] {
+            let a = from_bytes(pair[0], pair[1], pair[2]);
+            let b = from_bytes(PAPER[0], PAPER[1], PAPER[2]);
+            let c = blend_in_encoded_space(pair, PAPER, 0.5);
+
+            let (linear_coverage, _) = two_color_residual(c, a, b, &policy).unwrap();
+            assert!(
+                linear_coverage - 0.5 > 0.17,
+                "{name}: the linear hypothesis should be biased high by more \
+                 than 0.17, got {linear_coverage}"
+            );
+
+            let best = two_color_best(c, a, b, &policy).unwrap();
+            assert!(
+                (best.mixture.coverage - 0.5).abs() < 2e-3,
+                "{name}: choosing the transfer removes the bias, got {}",
+                best.mixture.coverage
+            );
+        }
+    }
+
+    /// A regression guard in the other direction: correctly antialiased input
+    /// must not be re-explained by the encoded hypothesis. §10.2's model is
+    /// the default and stays the default when it is right.
+    #[test]
+    fn a_linear_light_blend_still_chooses_the_linear_hypothesis() {
+        let a = from_bytes(RED[0], RED[1], RED[2]);
+        let b = from_bytes(PAPER[0], PAPER[1], PAPER[2]);
+        let policy = MixturePolicy::default();
+
+        for target in [0.125, 0.25, 0.5, 0.75, 0.875] {
+            let c = a.scale(target).plus(b.scale(1.0 - target));
+            let best = two_color_best(c, a, b, &policy).unwrap();
+            assert_eq!(best.space, CompositeSpace::LinearLight);
+            assert!((best.mixture.coverage - target).abs() < 1e-9);
+        }
+    }
+
+    /// PTE-AA-003's symmetry requirement, at the estimator level: which side is
+    /// called `A` is a labelling choice and must not change the transfer that
+    /// wins or the boundary it implies.
+    #[test]
+    fn the_transfer_choice_is_symmetric_under_swapping_the_sides() {
+        let a = from_bytes(RED[0], RED[1], RED[2]);
+        let b = from_bytes(PAPER[0], PAPER[1], PAPER[2]);
+        let policy = MixturePolicy::default();
+
+        for target in [0.2, 0.5, 0.8] {
+            let c = blend_in_encoded_space(RED, PAPER, target);
+            let forward = two_color_best(c, a, b, &policy).unwrap();
+            let reverse = two_color_best(c, b, a, &policy).unwrap();
+            assert_eq!(forward.space, reverse.space);
+            assert!(
+                (forward.mixture.coverage + reverse.mixture.coverage - 1.0).abs() < 1e-9,
+                "coverages should sum to one"
+            );
+        }
+    }
+
+    /// PTE-AA-002: inseparable endpoints have no coverage under either
+    /// hypothesis, and the answer is `None` rather than an amplified number.
+    #[test]
+    fn inseparable_endpoints_have_no_estimate_in_either_space() {
+        let a = from_bytes(128, 128, 128);
+        let policy = MixturePolicy::default();
+        assert!(two_color_best(a, a, a, &policy).is_none());
+    }
+
+    /// A fully transparent endpoint has no recoverable straight colour, so the
+    /// encoded hypothesis cannot be formed. §10.2's linear model still can, and
+    /// is the honest answer rather than a refusal (PTE-COLOR-009).
+    #[test]
+    fn a_transparent_endpoint_falls_back_to_the_linear_hypothesis() {
+        let a = from_bytes(200, 40, 40);
+        let b = PremulLinearRgba::TRANSPARENT;
+        let policy = MixturePolicy::default();
+        let c = a.scale(0.5).plus(b.scale(0.5));
+        let best = two_color_best(c, a, b, &policy).unwrap();
+        assert_eq!(best.space, CompositeSpace::LinearLight);
+        assert!((best.mixture.coverage - 0.5).abs() < 1e-9);
     }
 }
