@@ -39,7 +39,7 @@
 
 use crate::edges::{EdgeField, PixelEvidence};
 use palette_tracer_color::alpha::PremulLinearRgba;
-use palette_tracer_color::mixture::{MixturePolicy, two_color_residual};
+use palette_tracer_color::mixture::{CompositeSpace, MixturePolicy, two_color_best};
 use palette_tracer_color::spaces::LinearRgb;
 use palette_tracer_color::stats::ColorStats;
 use palette_tracer_core::checked::u32_to_usize;
@@ -414,10 +414,15 @@ pub struct FringeAudit {
     pub target: u32,
     /// Its pixel count.
     pub pixels: u64,
-    /// Mixture residual that justified the decision.
+    /// Mixture residual that justified the decision, in linear-light units.
     pub residual: f64,
     /// Inferred coverage of the target.
     pub coverage: f64,
+    /// Which compositing transfer explained the observation (§10.2).
+    ///
+    /// PTE-SEG-016 wants the decision reversible from its record, and the
+    /// residual alone does not say which model produced it.
+    pub space: CompositeSpace,
 }
 
 /// The §8.5 merge cost for two live regions, or `None` if the merge is
@@ -693,7 +698,25 @@ pub fn reassign_fringe(
 
         // A fringe is thin and small relative to its neighbours, and never a
         // pinned identity (§8.6).
-        if summary.pinned || summary.protection > 0.5 {
+        //
+        // §8.7's protection score is deliberately *not* consulted here. It used
+        // to veto any region scoring above 0.5, which inverted §8.6's own
+        // logic: §8.6 lists thinness as evidence *for* a region being fringe,
+        // and its four conditions do not include a shape veto. The veto also
+        // misfired on precisely the shape antialiasing produces. Under the
+        // 8-connected partition a three-pixel chain touching only at corners
+        // has perimeter 12 against area 3, so `perimeter²/(16·area)` reads 3.0
+        // where the same length of straight one-pixel strip reads 1.33 -- the
+        // proxy is calibrated for 4-connected blobs and over-scores diagonal
+        // chains by more than twice. That is what kept an antialiased circle
+        // at eight faces after every other fringe fragment had been absorbed.
+        //
+        // What separates a hairline from a fringe is not shape but colour: a
+        // dark line between two regions is not a mixture of them, so the
+        // residual gate below rejects it. `an_antialiased_hairline_is_not_
+        // absorbed_because_it_is_not_a_mixture` is that claim as a test, and
+        // `topology/one-pixel-bridge` is it end to end in the corpus.
+        if summary.pinned {
             continue;
         }
         if summary.area > u64::from(policy.small_region_pixels).max(1) {
@@ -717,9 +740,16 @@ pub fn reassign_fringe(
         let b = graph.summaries[b_id as usize].premultiplied_mean();
         let c = summary.premultiplied_mean();
 
-        let Some((coverage, residual)) = two_color_residual(c, a, b, &mixture_policy) else {
+        // §10.2: score both compositing hypotheses and keep the one that
+        // explains the observation. Fitting only the linear-light model to a
+        // raster that was composited on encoded values costs a systematic
+        // residual of up to 0.057 -- above this gate for ordinary artwork
+        // colours -- and rejects genuine fringe as if it were a third fill.
+        let Some(best) = two_color_best(c, a, b, &mixture_policy) else {
             continue;
         };
+        let (coverage, residual, space) =
+            (best.mixture.coverage, best.mixture.residual, best.space);
         if residual > policy.fringe_max_residual {
             continue;
         }
@@ -744,6 +774,7 @@ pub fn reassign_fringe(
             pixels: summary.area,
             residual,
             coverage,
+            space,
         });
         commit(graph, target_root, id);
     }
@@ -1060,6 +1091,51 @@ mod tests {
             ..hairline.clone()
         };
         assert!(protection_score(&blob) < hairline_score);
+    }
+
+    /// §8.6 and PTE-SEG-017: what protects a thin feature is colour evidence,
+    /// not shape.
+    ///
+    /// A one-pixel dark line between two *different* light regions is exactly
+    /// the shape §8.6 absorbs -- thin, small, two neighbours -- and must
+    /// survive anyway, because its colour is nowhere near the segment joining
+    /// its neighbours. This is the guard on removing §8.7's shape veto from
+    /// the fringe gate; `topology/one-pixel-bridge` is the same claim end to
+    /// end in `make engine-corpus`.
+    #[test]
+    fn an_antialiased_hairline_is_not_absorbed_because_it_is_not_a_mixture() {
+        let left = lab([230, 230, 240]);
+        let right = lab([240, 232, 228]);
+        let line = lab([16, 16, 20]);
+
+        // left | line | right, the line one pixel wide and four tall.
+        let mut colors = Vec::new();
+        for _ in 0..4u32 {
+            for x in 0..5u32 {
+                colors.push(match x {
+                    0 | 1 => left,
+                    2 => line,
+                    _ => right,
+                });
+            }
+        }
+        let mut s = scene(&colors, &[0; 20], 5, 4, &[false]);
+
+        let mut policy = policy();
+        policy.small_region_pixels = 8;
+        policy.fringe_max_residual = 0.2;
+
+        let audits =
+            reassign_fringe(&mut s.graph, &policy, &WorkBudget::unbounded(), &NoControl).unwrap();
+
+        assert!(
+            audits.iter().all(|a| a.pixels != 4),
+            "the four-pixel dark line must not be absorbed as fringe: {audits:?}"
+        );
+
+        // And nothing was lost either way (PTE-SEG-003, PTE-NO-007).
+        let (labels, count) = apply(&s.graph, &s.labels).unwrap();
+        assert_eq!(labels.histogram(count as usize).iter().sum::<u64>(), 20);
     }
 
     /// §8.6 and PTE-NO-006: a fringe region whose colour is a mixture of its
