@@ -105,15 +105,58 @@ struct Options {
     positional: Vec<String>,
 }
 
+/// Configuration values supplied directly on the command line.
+///
+/// They are collected separately and applied after every `--config` file has
+/// been parsed. PTE-API-015 defines precedence by source, not by token order:
+/// a flag must win even when it appears before the file it overrides.
+#[derive(Default)]
+struct ConfigOverrides {
+    profile: Option<Profile>,
+    palette: Option<Vec<PaletteEntrySpec>>,
+    max_colors: Option<u32>,
+    background: Option<BackgroundPolicy>,
+    curve_tolerance_px: Option<Finite>,
+    pretty: bool,
+    exact_palette: bool,
+}
+
+impl ConfigOverrides {
+    fn apply(self, config: &mut TraceConfig) {
+        if let Some(profile) = self.profile {
+            config.profile = profile;
+        }
+        if let Some(entries) = self.palette {
+            config.palette.entries = entries;
+        }
+        if let Some(max_colors) = self.max_colors {
+            config.palette.max_colors = Some(max_colors);
+        }
+        if let Some(background) = self.background {
+            config.color.background = Some(background);
+        }
+        if let Some(curve_tolerance_px) = self.curve_tolerance_px {
+            config.geometry.curve_tolerance_px = Some(curve_tolerance_px);
+        }
+        if self.pretty {
+            config.output.pretty = Some(true);
+        }
+        if self.exact_palette {
+            config
+                .modifiers
+                .push(palette_tracer_core::config::Modifier::ExactPalette);
+        }
+    }
+}
+
 fn parse(args: &[String]) -> Result<Options, TraceError> {
     let mut out = Options {
         config: TraceConfig::default(),
         ..Default::default()
     };
+    let mut overrides = ConfigOverrides::default();
     let mut index = 0;
 
-    // PTE-API-015: flags override config-file fields, so the file is read first
-    // and every flag is applied after it.
     while index < args.len() {
         let arg = &args[index];
         let mut value = || -> Result<String, TraceError> {
@@ -137,41 +180,43 @@ fn parse(args: &[String]) -> Result<Options, TraceError> {
             }
             "--profile" => {
                 let name = value()?;
-                out.config.profile = Profile::ALL
-                    .into_iter()
-                    .find(|p| p.as_str() == name)
-                    .ok_or(TraceError::Config(ConfigError::UnknownValue {
-                        field: "profile",
-                        got: name.clone(),
-                    }))?;
+                overrides.profile = Some(
+                    Profile::ALL
+                        .into_iter()
+                        .find(|p| p.as_str() == name)
+                        .ok_or(TraceError::Config(ConfigError::UnknownValue {
+                            field: "profile",
+                            got: name.clone(),
+                        }))?,
+                );
             }
             "--palette" => {
                 let list = value()?;
-                out.config.palette.mode = Some(PaletteMode::Fixed);
-                out.config.palette.entries = list
-                    .split(',')
-                    .filter(|s| !s.trim().is_empty())
-                    .enumerate()
-                    .map(|(i, color)| PaletteEntrySpec {
-                        id: i as u32,
-                        color: color.trim().to_owned(),
-                        pinned: true,
-                        reach: None,
-                        role: PaletteRole::Fill,
-                        priority: 0,
-                    })
-                    .collect();
+                overrides.palette = Some(
+                    list.split(',')
+                        .filter(|s| !s.trim().is_empty())
+                        .enumerate()
+                        .map(|(i, color)| PaletteEntrySpec {
+                            id: i as u32,
+                            color: color.trim().to_owned(),
+                            pinned: true,
+                            reach: None,
+                            role: PaletteRole::Fill,
+                            priority: 0,
+                        })
+                        .collect(),
+                );
             }
             "--max-colors" => {
                 let n = value()?;
-                out.config.palette.max_colors = Some(
+                overrides.max_colors = Some(
                     n.parse()
                         .map_err(|_| out_of_range("palette.maxColors", &n))?,
                 );
             }
             "--background" => {
                 let policy = value()?;
-                out.config.color.background = Some(match policy.as_str() {
+                overrides.background = Some(match policy.as_str() {
                     "keep" => BackgroundPolicy::Keep,
                     "transparent" => BackgroundPolicy::Transparent,
                     "auto" => BackgroundPolicy::Auto,
@@ -188,17 +233,13 @@ fn parse(args: &[String]) -> Result<Options, TraceError> {
                 let number: f64 = text
                     .parse()
                     .map_err(|_| out_of_range("geometry.curveTolerancePx", &text))?;
-                out.config.geometry.curve_tolerance_px =
+                overrides.curve_tolerance_px =
                     Some(Finite::new(number, "geometry.curveTolerancePx")?);
             }
             "--report" => out.report = Some(value()?),
             "--print-effective-config" => out.print_effective_config = true,
-            "--pretty" => out.config.output.pretty = Some(true),
-            "--exact-palette" => {
-                out.config
-                    .modifiers
-                    .push(palette_tracer_core::config::Modifier::ExactPalette);
-            }
+            "--pretty" => overrides.pretty = true,
+            "--exact-palette" => overrides.exact_palette = true,
             other if other.starts_with("--") => {
                 return Err(TraceError::Config(ConfigError::UnknownValue {
                     field: "option",
@@ -210,6 +251,7 @@ fn parse(args: &[String]) -> Result<Options, TraceError> {
         index += 1;
     }
 
+    overrides.apply(&mut out.config);
     if !out.config.palette.entries.is_empty() {
         out.config.palette.mode = Some(PaletteMode::Fixed);
     }

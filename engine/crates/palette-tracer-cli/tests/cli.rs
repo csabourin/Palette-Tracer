@@ -378,6 +378,49 @@ fn a_flag_overrides_the_same_field_from_the_config_file() {
     );
 }
 
+/// PTE-API-015 is precedence, not argument ordering. A user may put the
+/// profile before `--config`; it must still override the file's profile while
+/// leaving unrelated file fields intact.
+#[test]
+fn a_profile_flag_before_the_config_file_still_wins() {
+    let scratch = Scratch::new("profile-precedence");
+    let input = scratch.write("in.ppm", &ppm_fixture());
+
+    let schema = pte(&["schema"], None);
+    assert_eq!(schema.code, 0, "stderr was: {}", schema.stderr);
+    let mut config: serde_json::Value = serde_json::from_str(schema.stdout_text()).unwrap();
+    config["profile"] = serde_json::json!("flat-illustration");
+    config["palette"]["maxColors"] = serde_json::json!(3);
+    let config_path = scratch.write("config.json", config.to_string().as_bytes());
+
+    let run = pte(
+        &[
+            "trace",
+            "--profile",
+            "logo",
+            "--config",
+            &s(&config_path),
+            "--print-effective-config",
+            &s(&input),
+            &s(&scratch.path("out.svg")),
+        ],
+        None,
+    );
+
+    assert_eq!(run.code, 0, "stderr was: {}", run.stderr);
+    let start = run.stderr.find('{').expect("effective config on stderr");
+    let end = run.stderr.rfind('}').expect("effective config on stderr");
+    let effective: serde_json::Value =
+        serde_json::from_str(&run.stderr[start..=end]).expect("effective config is JSON");
+
+    assert_eq!(effective["profile"], serde_json::json!("logo"));
+    assert_eq!(
+        effective["palette"]["maxColors"],
+        serde_json::json!(3),
+        "an unrelated value from the config file must remain in force"
+    );
+}
+
 /// The config file is still honoured for fields no flag touched: precedence is
 /// per field, not "any flag discards the file".
 #[test]

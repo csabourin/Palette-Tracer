@@ -3,8 +3,8 @@
 `engine/SPEC.md` is authoritative. This document records evidence; it does not
 redefine requirements.
 
-**Assessed at:** 2026-08-11, after §10 subpixel antialias reconstruction.
-**Measured with:** `cargo test --workspace` → **398 passed, 0 failed**;
+**Assessed at:** 2026-08-11, after the CLI precedence and thin-feature switch fixes.
+**Measured with:** `cargo test --workspace` → **400 passed, 0 failed**;
 `cargo clippy --workspace --all-targets -- -D warnings` → clean;
 `cargo fmt --check` → clean;
 `cargo check --workspace --target wasm32-unknown-unknown` → clean;
@@ -70,8 +70,8 @@ segments.
 | Phase | Status | Evidence | Remaining |
 |---|---|---|---|
 | Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 12-fixture synthetic corpus with manifests (`tools/make_fixtures.py`); `cargo deny` wired to `make engine-deny` | No **real-world** corpus; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
-| Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 64 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
-| Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 27 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
+| Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 70 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
+| Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 28 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
 | Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence, §10.5 bounded optimisation: `palette-tracer-aa`, 23 tests, `docs/notes/subpixel-antialias.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners, DP segmentation: `palette-tracer-geometry`, 48 tests, `docs/notes/curve-fitting.md` | PTE-AA-001's encoded-transfer compatibility extension; PTE-AA-006 junction optimisation; §11.4 arcs; §11.7 primitives (PTE-GEO-010/011) |
 | Phase 4 — logo, illustration, fabrication | Not implemented | — | §11.7, §12, §16 |
 | Phase 5 — lines, lettering, coloring books | Partly | `coloring-book` emits each interface once (§13.6) | All of §13.1–§13.5 |
@@ -102,7 +102,7 @@ the order the remaining ones should be taken in.
 | PTE-API-007/008/009 | conforming | `Finite`, `deny_unknown_fields`, `Resolver` | `an_unknown_key_is_refused`, `provenance_distinguishes_user_from_profile` |
 | PTE-API-010/011 | conforming | Identifiers from raster order; `f64` throughout | `labels_are_numbered_by_raster_position_not_allocation_order` |
 | PTE-API-012 | conforming | Stable codes on every warning and error | `codes_are_category_prefixed_and_stable` |
-| PTE-API-013/014/015 | conforming | `pte` stream discipline and flag precedence | `crates/palette-tracer-cli/tests/cli.rs`, 22 tests against the real binary. Writing it found a defect: `--report -` with an SVG also on stdout concatenated two documents, and is now refused |
+| PTE-API-013/014/015 | conforming | `pte` stream discipline and source-based flag precedence, independent of token order | `crates/palette-tracer-cli/tests/cli.rs`, 23 tests against the real binary, including `a_profile_flag_before_the_config_file_still_wins` and the existing stream-collision gate |
 | PTE-API-017..022 | partly | `TraceSession` with Appendix E.1 keys, `dispose` | `precision_reuses_the_caches_and_reach_does_not`; no JS binding exists |
 | PTE-COLOR-001..004 | conforming | `color::spaces` | Published OKLab reference vectors; `ΔE_OK` convention declared |
 | PTE-COLOR-005 | conforming | Reported as `assumed-srgb` | `the_report_has_the_appendix_a_top_level_keys` |
@@ -116,7 +116,7 @@ the order the remaining ones should be taken in.
 | PTE-SEG-008 | conforming | Named: Felzenszwalb–Huttenlocher MSF predicate, **not** Cousty's watershed cut | Module documentation and `AlgorithmVersions` |
 | PTE-SEG-009..014 | conforming | `segment::rag` | `adjacency_is_symmetric`, `merging_is_deterministic`, `distinct_pinned_identities_never_merge` |
 | PTE-SEG-015/016 | conforming | Fringe cleanup runs to a deterministic fixed point before topology, retaining audit records that name the compositing transfer. §8.7's shape veto is not consulted by this gate; the mixture residual protects hairlines | `an_antialias_fringe_is_absorbed_with_an_audit_record` requires a real reassignment and proves the next sweep is empty; `an_antialiased_hairline_is_not_absorbed_because_it_is_not_a_mixture` |
-| PTE-SEG-017 | **partly** | Elongation and width only | `protection_distinguishes_a_hairline_from_a_speck`. Geodesic length, repeated-pattern evidence, endpoint and junction evidence, and profile role are **not** implemented |
+| PTE-SEG-017 | **partly** | Elongation and width only; `segmentation.protectThinFeatures` now gates the protection penalty instead of being digest-only | `protection_distinguishes_a_hairline_from_a_speck`, `disabling_thin_feature_protection_changes_the_merge_decision`. Geodesic length, repeated-pattern evidence, endpoint and junction evidence, and profile role are **not** implemented |
 | PTE-SEG-018/019 | **not implemented** | — | No tiling |
 | PTE-TOPO-001..007 | conforming | `topology::extract` | `twin_traversals_are_exact_reverses_of_one_chain`, `every_face_cycle_closes_exactly_once` |
 | PTE-TOPO-008/009/010 | **partly** | §9.4 energy with data, continuity, mixture and connectivity terms | `reflection_reflects_the_decisions`. PTE-TOPO-009's asymptotic-decider data rule is **not** implemented; the data term is colour similarity. Of Kopf–Lischinski's heuristics only sparse-pixel is implemented |
@@ -145,7 +145,7 @@ the order the remaining ones should be taken in.
 | PTE-SEC-009 | conforming | `unsafe_code = "deny"` workspace-wide | The workspace lint table |
 | PTE-DET-001..004 | conforming | Quantised keys, stable heaps, no unordered iteration in an output path | `determinism.rs`, 8 tests, plus `make engine-parity`: the same engine compiled for `wasm32-wasip1` and run under Node's V8 produces byte-identical semantic digests on all 12 fixtures. Browser-engine parity beyond V8 is still unproven |
 | PTE-LIC-001..005 | conforming | MIT-only engine: ADR-0004; clean-room and one-way dependency boundary: ADR-0003; `deny.toml`, `THIRD_PARTY_NOTICES.md` | `make engine-deny` → `advisories ok, bans ok, licenses ok, sources ok`. `cargo metadata` reports the workspace packages as MIT |
-| PTE-NO-042 | conforming | Unimplemented settings refused by name with the governing requirement, now including `geometry.allowArcs` | `unimplemented_modifiers_are_refused`, `an_unimplemented_profile_is_refused_not_downgraded` |
+| PTE-NO-042 | conforming | Unimplemented settings are refused by name; implemented settings reach a decision path | `unimplemented_modifiers_are_refused`, `an_unimplemented_profile_is_refused_not_downgraded`, `disabling_thin_feature_protection_changes_the_merge_decision` |
 | PTE-TEST-003/004 | partly | 12 synthetic fixtures regenerated from analytic descriptions, with §25.2 manifests: `tools/make_fixtures.py`, `make engine-fixtures` | Synthetic only. No real-world corpus, and no multiple-resolution or rotation sweep yet |
 
 ---
@@ -269,7 +269,7 @@ These are the things a reader would otherwise have to discover.
    cross-renderer correctness is made.
 6. **Native-versus-WASM parity is established for V8, not for browsers.**
    `make engine-parity` compiles `pte` for `wasm32-wasip1`, runs it under Node's
-   WASI, and compares semantic digests against the native build across all 13
+   WASI, and compares semantic digests against the native build across all 12
    fixtures. They match. What that establishes is that the engine's arithmetic
    and decisions are target-independent. What it does not establish: the
    behaviour of a `wasm-bindgen` binding, which does not exist, or of a browser
@@ -291,9 +291,11 @@ These are the things a reader would otherwise have to discover.
    PTE-PERF-002/005 are untouched. The adversarial *cases* appear in tests
    (checkerboards, noise, resource limits, a 2000-sample random walk); the
    adversarial *tooling* does not.
-10. **Thin-feature protection is partial.** Two of §8.7's seven signals:
-   elongation and width. Geodesic length, repeated-pattern evidence, endpoint
-   and junction evidence, and profile role are not implemented.
+10. **Thin-feature protection is partial.** Its configuration switch now
+   controls the merge penalty, but the score still uses only two of §8.7's
+   seven signals: elongation and width. Geodesic length, repeated-pattern
+   evidence, endpoint and junction evidence, and profile role are not
+   implemented.
 11. **No tiling.** PTE-SEG-018/019 and §19.5 are absent, so peak memory scales
     with the whole image.
 12. **The Python application does not use this engine.** Nothing in
