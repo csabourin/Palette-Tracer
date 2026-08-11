@@ -64,9 +64,11 @@ IR and the orchestration to one crate is circular.
 
 ## Licence
 
-`MIT OR Apache-2.0`, at your option. The repository root is GPL-3.0-or-later and
-governs the Python application; this directory is separately licensed and shares
-no code with it. See `docs/decisions/ADR-0001-workspace-and-licence-shape.md`
-and `ADR-0003-clean-room-provenance.md`.
+`MIT`. The repository root is GPL-3.0-or-later and governs the Python
+application; this directory is a separately licensed MIT component. A future
+adapter belongs on the GPL side and may call the engine through its public API;
+the engine must not copy or depend on the GPL implementation. See
+`docs/decisions/ADR-0004-mit-licence-and-integration-boundary.md` and
+`ADR-0003-clean-room-provenance.md`.
 
 MSRV 1.90, edition 2024. Built and tested with `rustc 1.97.1`.

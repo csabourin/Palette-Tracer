@@ -1,13 +1,14 @@
 # ADR-0001 — Workspace and licence shape
 
-**Status:** Accepted
+**Status:** Accepted; licence selection superseded by ADR-0004
 **Date:** 2026-08-10
 **Resolves:** `SPEC.md` §40 open question 1 ("Repository/license shape")
 **Requirements:** PTE-LIC-001..005, §37.1, §37.3
 
 ## Context
 
-`SPEC.md` §37.1 says the new Rust workspace SHOULD use `MIT OR Apache-2.0`, and
+At the time of this decision, `SPEC.md` §37.1 said the new Rust workspace
+SHOULD use `MIT OR Apache-2.0`, and
 §37.3 observes that the repository hosting it is GPL-3.0-or-later. §40 lists the
 choice between "a separate permissive engine repository" and "a permissive
 subproject hosted by the GPL application" as explicitly unresolved.
@@ -18,10 +19,11 @@ and vendoring pipeline before there is anything to release.
 
 ## Decision
 
-The engine lives at `engine/` **inside this repository** and is licensed
-`MIT OR Apache-2.0`. The repository root remains GPL-3.0-or-later.
+The engine lives at `engine/` **inside this repository**. This ADR originally
+selected `MIT OR Apache-2.0`; ADR-0004 supersedes that part of the decision and
+selects MIT only. The repository root remains GPL-3.0-or-later.
 
-* `engine/LICENSE-MIT` and `engine/LICENSE-APACHE` state the engine's terms.
+* `engine/LICENSE-MIT` states the engine's terms.
 * `engine/SPEC.md` is authoritative for `engine/` and only for `engine/`. The
   root `SPEC.md` remains authoritative for the Python application. The two use
   disjoint requirement-identifier schemes (`PTE-TOPO-004` versus `§20.3`), so a

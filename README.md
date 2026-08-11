@@ -22,8 +22,8 @@ adjacent fills cannot drift apart or leave a seam.
 
 It is early and it is not wired into the Python pipeline. Read
 `engine/docs/IMPLEMENTATION_STATUS.md` before forming an expectation -- curve
-fitting is built, but subpixel antialias reconstruction, strokes and gradients
-are not. The engine is licensed `MIT OR Apache-2.0`; the rest of this repository
+fitting and subpixel antialias reconstruction are built, but strokes and
+gradients are not. The engine is licensed `MIT`; the rest of this repository
 remains GPL-3.0-or-later.
 
 ```bash

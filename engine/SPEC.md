@@ -8,7 +8,7 @@
 **Working product name:** Palette Tracer Engine, abbreviated **PTE**  
 **Target repository:** `csabourin/Palette-Tracer` or a successor Rust workspace  
 **Intended readers:** coding agents, maintainers, algorithm engineers, API integrators, and release reviewers  
-**Proposed engine license:** `MIT OR Apache-2.0`  
+**Engine license:** `MIT`
 
 ---
 
@@ -82,7 +82,7 @@ The following decisions define PTE. Reversing one requires an Architecture Decis
 6. **Linear or near-linear memory.** No normal pipeline stage allocates a table proportional to `pixel_count × palette_size`, `pixel_count × scan_count`, or `pixel_count × candidate_curve_count`.
 7. **Deterministic by default.** Identical input bytes, decoded pixels, configuration, engine version, and target feature set produce semantically identical output regardless of thread count or tile schedule.
 8. **Profiles expose intent, not hidden algorithms.** A profile chooses documented policies and defaults. Every effective setting is serializable and inspectable.
-9. **Permissive engine boundary.** The proposed core and first-party adapters use `MIT OR Apache-2.0`. GPL implementations may be benchmark references or external process adapters, but their code is not copied into or linked with the permissive core.
+9. **Permissive engine boundary.** The core and first-party engine adapters use `MIT`. GPL implementations may be benchmark references or consumers through an adapter owned by the GPL side, but their code is not copied into or linked with the permissive core.
 10. **VTracer is a baseline, not the product definition.** VTracer 1.0 alpha already offers a Rust framework, WASM packaging, fixed palettes, watershed segmentation, and shared-boundary cutout. Phase 0 must benchmark it and assess compatible reuse component by component. PTE must retain its own IR, contracts, profiles, validation, and differentiating algorithms.
 
 ---
@@ -188,7 +188,7 @@ Compatible modifiers include:
 | Potrace | Excellent binary-outline model: path decomposition, global optimal polygon, corner/curve classification, cubic fitting and curve optimization | Binary input; no shared multicolor topology, strokes, or gradients | Program is GPL; study paper and behavior, do not copy implementation into permissive core |
 | AutoTrace | Color reduction, outline tracing, centerline mode, despeckling | Older C architecture; less suitable as a directly portable modern core | Program GPL-2+; library LGPL-2.1+; avoid linkage in the permissive WASM core |
 | ImageTracerJS | Small browser-oriented color tracer, permissive/public-domain code base | Simpler topology and cleanup; region omission after tracing can create holes | Unlicense/public domain; ideas/code still require provenance review and tests |
-| VTracer 1.0 alpha | Rust, CLI/library/WASM, fixed OKLab palette, hierarchical watershed, seam-free shared-boundary cutout, curve simplification, cached stages | Alpha API; PTE still needs richer art direction, antialias inversion, stroke model, lettering constraints, standard gradient reconstruction, fabrication semantics and stricter contracts | Current workspace declares `MIT OR Apache-2.0`; verify exact dependency and file licensing before reuse |
+| VTracer 1.0 alpha | Rust, CLI/library/WASM, fixed OKLab palette, hierarchical watershed, seam-free shared-boundary cutout, curve simplification, cached stages | Alpha API; PTE still needs richer art direction, antialias inversion, stroke model, lettering constraints, standard gradient reconstruction, fabrication semantics and stricter contracts | Current workspace declares `MIT`; verify exact dependency and file licensing before reuse |
 | Palette-Tracer (current) | Exact palettes, OKLCH reaches, deterministic constrained quantization, background and destination policies | Python memory cost; mask-at-a-time backend; shared geometry, centerlines, gradients and alpha reconstruction are deferred | Current project is GPL-3.0+; migrate concepts through a documented clean-room boundary if the new engine is separately permissive |
 
 `PTE-BASE-001` Phase 0 MUST benchmark the current stable and 1.0-alpha VTracer lines, Potrace, AutoTrace, and ImageTracerJS on a licensed common corpus.
@@ -2844,15 +2844,21 @@ Reusable numerical/geometry kernels may still sit underneath these contracts.
 
 ## 37. Licensing and clean-room policy
 
-### 37.1 Proposed licensing shape
+### 37.1 Licensing shape
 
-The new Rust workspace SHOULD use:
+The Rust workspace uses:
 
 ```toml
-license = "MIT OR Apache-2.0"
+license = "MIT"
 ```
 
-with both license texts at the workspace root and SPDX headers/policy where maintainers choose. The existing GPL Python/Inkscape application may remain a separate host that invokes the permissive engine.
+with the MIT text at the workspace root and SPDX headers/policy where
+maintainers choose. The existing GPL Python/Inkscape application may consume
+the engine through an adapter owned by the GPL side. This policy does not
+require process isolation: CLI, C ABI, an in-process extension, or WASM are
+packaging choices, provided the MIT engine remains independently identifiable,
+keeps its notice, and does not copy or depend on GPL implementation code. See
+ADR-0004.
 
 ### 37.2 GPL/LGPL boundaries
 
@@ -2877,7 +2883,6 @@ The user’s stated direction for this specification is a permissive engine. The
 ### 37.4 Required files/checks
 
 - `LICENSE-MIT`;
-- `LICENSE-APACHE`;
 - `THIRD_PARTY_NOTICES.md`;
 - dependency-license policy (`deny.toml` or equivalent);
 - source/provenance notes for algorithm modules;
@@ -3052,20 +3057,20 @@ This order prevents spending months on a sophisticated segmenter whose output ca
 
 ## 40. Open design questions requiring an ADR
 
-These questions are intentionally unresolved in version 0.1:
+These questions are intentionally unresolved in version 0.1. The former
+repository/license question is resolved by ADR-0001 and ADR-0004.
 
-1. **Repository/license shape:** separate permissive engine repository versus a permissive subproject hosted by the GPL application.
-2. **VTracer reuse:** which 1.0-alpha components, if any, meet PTE contracts and have acceptable API maturity.
-3. **Reference segmenter:** hierarchical watershed implementation versus another edge-aware hierarchy with stronger deterministic/memory properties.
-4. **Internal topology structure:** full DCEL versus a more compact half-edge variant specialized to planar image partitions.
-5. **Cross-target numeric contract:** exact semantic digest quantization and whether native SIMD may differ in non-strict mode.
-6. **Arc support:** retain semantic circular arcs in IR/output or lower all non-primitives to cubics for compatibility.
-7. **Gradient interpolation:** stop adaptation policy needed for consistent linear-light intent across actual SVG renderers.
-8. **ICC baseline:** built-in sRGB only in core with optional adapter, or a broader required profile set.
-9. **Physical output model:** SVG metadata/classes convention for common cutter/laser ecosystems without declaring one universal convention.
-10. **C ABI timing:** before or after Rust/JS schemas stabilize.
-11. **Automatic mode classifier:** rule-based profile suggestions versus requiring users to choose intent; automatic classification must not hide effective policy.
-12. **Experimental variable-width strokes:** portable outline only versus an internal richer model and editor-specific exporters.
+1. **VTracer reuse:** which 1.0-alpha components, if any, meet PTE contracts and have acceptable API maturity.
+2. **Reference segmenter:** hierarchical watershed implementation versus another edge-aware hierarchy with stronger deterministic/memory properties.
+3. **Internal topology structure:** full DCEL versus a more compact half-edge variant specialized to planar image partitions.
+4. **Cross-target numeric contract:** exact semantic digest quantization and whether native SIMD may differ in non-strict mode.
+5. **Arc support:** retain semantic circular arcs in IR/output or lower all non-primitives to cubics for compatibility.
+6. **Gradient interpolation:** stop adaptation policy needed for consistent linear-light intent across actual SVG renderers.
+7. **ICC baseline:** built-in sRGB only in core with optional adapter, or a broader required profile set.
+8. **Physical output model:** SVG metadata/classes convention for common cutter/laser ecosystems without declaring one universal convention.
+9. **C ABI timing:** before or after Rust/JS schemas stabilize.
+10. **Automatic mode classifier:** rule-based profile suggestions versus requiring users to choose intent; automatic classification must not hide effective policy.
+11. **Experimental variable-width strokes:** portable outline only versus an internal richer model and editor-specific exporters.
 
 An ADR MUST state decision, context, alternatives, consequences, test impact, compatibility impact, and reversal cost.
 

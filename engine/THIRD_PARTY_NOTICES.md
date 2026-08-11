@@ -4,9 +4,10 @@ SPEC §37.4 requires this file. It lists every crate the Palette Tracer Engine
 links, why it is here, and the licence review that admitted it
 (PTE-ARCH-012, PTE-SEC-011, PTE-SEC-013).
 
-The engine is licensed `MIT OR Apache-2.0`. Every direct dependency must be
-compatible with both halves of that, must build for `wasm32-unknown-unknown`,
-and must not pull a GPL or LGPL closure (PTE-LIC-003).
+The engine is licensed `MIT`. Every direct dependency must be compatible with
+an MIT-distributed engine, must build for `wasm32-unknown-unknown`, and must not
+pull a GPL or LGPL closure (PTE-LIC-003). Third-party components retain their
+own notices and terms; the engine's MIT licence does not replace them.
 
 ## Direct dependencies
 

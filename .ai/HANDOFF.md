@@ -1,12 +1,23 @@
 # Handoff
 
 **Session date:** 2026-08-11
-**Branch:** `claude/engine-project-gaps-rby09i`, restarted from merged PR #18's
-`master` to resolve PR #17
-**Working slice:** reconciled the conflicting §10 implementations after PR #18
-merged, retaining its complete AA crate and salvaging the older branch's
-fixed-point fringe cleanup and subpixel-safe SVG precision. Nothing under
-`palette_trace/` was read or touched.
+**Branch:** `agent/document-mit-boundary`, from merged PR #17's `master`
+**Working slice:** recorded the repository owner's MIT-only licence decision
+and defined the GPL-host/MIT-engine integration boundary. No Python
+implementation source was read or changed.
+
+## Licence decision
+
+The engine is now MIT-only. ADR-0004 supersedes ADR-0001's former dual
+`MIT OR Apache-2.0` choice, the Cargo workspace and fixture manifests declare
+`MIT`, and `engine/LICENSE-APACHE` has been removed.
+
+"Boundary" now has an explicit meaning: the engine remains independently
+reusable under MIT, is written clean-room, and never depends on GPL application
+code. A future adapter belongs on the GPL side and may call the engine through
+the CLI, a C ABI, an in-process extension, or WASM. Process isolation is not a
+licensing requirement; the packaging choice must preserve the MIT notice and
+the one-way dependency/provenance rule.
 
 ## Merge resolution
 
@@ -128,6 +139,16 @@ make engine-parity      12 fixture(s), native and wasm32 agree
 make engine-corpus      the census above
 ```
 
+The MIT-only documentation session additionally ran:
+
+```
+make engine-lint        cargo fmt and workspace/all-target Clippy clean
+make engine-deny        advisories ok, bans ok, licenses ok, sources ok
+cargo metadata          all 10 workspace packages report license = MIT
+make_fixtures.py        all 12 generated manifest entries report first-party MIT
+git diff --check        clean
+```
+
 `cargo install cargo-deny --locked` failed once with a `libc` compile error and
 succeeded on a plain retry; if it fails for you, just run it again.
 
@@ -221,9 +242,9 @@ to represent.
 
 ## If you are wiring the engine into the Python application
 
-Unchanged, and deliberately untouched this session. Do not, without settling the
-licence question first. The engine is `MIT OR Apache-2.0` and was written
-clean-room against `palette_trace/**/*.py`
-(`engine/docs/decisions/ADR-0003-clean-room-provenance.md`). A GPL host calling a
-permissive engine through a process boundary or a C ABI is straightforward;
-linking them is a decision, not an implementation detail.
+The licence question is settled, but the integration is not implemented. Read
+ADR-0004 before choosing the mechanism. Put the adapter on the GPL side, depend
+one-way on the engine's public contract, retain the engine's MIT notice, and do
+not use `palette_trace/**/*.py` as implementation input for the engine
+(ADR-0003). The CLI, C ABI, in-process extension and WASM remain engineering
+options; none is selected by this decision.
