@@ -10,8 +10,8 @@ conforming because the real-input compatibility hypothesis estimates coverage
 in encoded sRGB before judging its residual in linear light. Adjacent:
 `PTE-SEG-015/016`
 (§8.6 fringe absorption, which shares the mixture estimator), `PTE-GEO-013`
-(a chain's endpoints do not move), `PTE-TOPO-001` and `PTE-AA-008` (one
-boundary, fitted once, inherited by both faces), `PTE-DET-002/003/004`
+(the fitter pins its endpoints), `PTE-TOPO-001/011/012/013` and `PTE-AA-008`
+(one shared boundary and one shared junction position), `PTE-DET-002/003/004`
 (no bare float decides anything; the same decision on every target),
 `PTE-AA-009` (the report distinguishes four boundary sources).
 
@@ -251,12 +251,12 @@ E = Σ cᵢ ρ(nᵢ·xᵢ − dᵢ) + λ_s Σ ‖x_{i−1} − 2xᵢ + x_{i+1}�
 
 ### 5.1 Two terms are constraints, not penalties
 
-`E_topology` and `E_pins` are enforced as hard constraints. Chain endpoints are
-junctions shared with other chains and do not move at all (PTE-GEO-013; and
-PTE-TOPO-011's junction optimisation is not implemented, so a moved endpoint
-would silently tear the boundary apart at the junction). Every interior point
-is confined to a trust region of one pixel around its source position
-(PTE-AA-007).
+`E_topology` and `E_pins` are enforced as hard constraints. The per-chain solve
+pins its endpoints. The following shared-junction pass may move an eligible
+vertex once, then copies the exact coordinate to every incident chain; its
+trust-region, cyclic-order and crossing gates are described in
+`junction-optimization.md`. Every interior point is confined to a trust region
+of one pixel around its source position (PTE-AA-007).
 
 An infinite penalty is a constraint, and a constraint is cheaper and cannot be
 traded away by a large enough smoothness term.
@@ -412,10 +412,11 @@ subpixel positions measured by the table above; face reduction alone is not a
    single disagreeing sample, but nothing yet pools the decision over an edge
    or an image, which would be strictly stronger evidence.
 
-4. **Only the two-colour case.** §10.4's barycentric junction weights exist in
-   `color::mixture` and are tested, but reconstruction does not consult them:
-   junction *positions* are PTE-TOPO-011/012/013, which is not implemented, so
-   there is nothing yet to feed them to. Chain endpoints are pinned.
+4. **The multi-colour compatibility model is linear-light only.** Junction
+   reconstruction now consumes §10.4's barycentric weights and jointly moves
+   one shared vertex. It does not generalise the two-colour encoded-sRGB
+   compatibility hypothesis to three or four colours; see
+   `junction-optimization.md`.
 
 5. **Chains that are already curves are skipped.** §10 runs before §11, so
    every chain is a polyline in practice. A cubic chain is left alone rather
@@ -441,7 +442,7 @@ and nothing under `palette_trace/` was read (PTE-LIC-002, ADR-0003).
 
 ## 11. Tests
 
-`crates/palette-tracer-aa`, 23 tests:
+`crates/palette-tracer-aa`, 27 tests:
 
 * `the_inverse_recovers_the_offset_that_produced_the_coverage`,
   `the_forward_map_recovers_the_coverage_that_produced_the_offset` — PTE-AA-003
@@ -462,7 +463,14 @@ and nothing under `palette_trace/` was read (PTE-LIC-002, ADR-0003).
   `reconstruction_beats_the_grid_position_it_replaces` — end to end on a case
   whose answer is known exactly.
 * `no_sample_leaves_its_trust_region` — PTE-AA-007.
-* `the_endpoints_of_a_chain_never_move` — PTE-GEO-013.
+* `the_per_chain_solve_does_not_move_endpoints` — PTE-TOPO-012.
+* `a_multicolour_junction_is_optimized_once_and_shared_exactly` —
+  PTE-AA-006 and PTE-TOPO-011/012.
+* `a_four_colour_junction_is_reconstructed_as_one_shared_vertex` — the
+  four-colour branch of PTE-AA-006.
+* `a_junction_move_that_reorders_incident_edges_is_rejected`,
+  `a_junction_move_that_crosses_a_nonincident_edge_is_rejected` —
+  PTE-TOPO-013.
 * `indistinguishable_sides_produce_no_constraint` — PTE-AA-002.
 
 `crates/palette-tracer-color/src/mixture.rs`:
