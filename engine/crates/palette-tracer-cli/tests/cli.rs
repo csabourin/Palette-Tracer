@@ -150,7 +150,11 @@ fn tracing_to_a_file_writes_nothing_at_all_to_stdout() {
         run.stderr
     );
     let svg = std::fs::read_to_string(&output).expect("the SVG was written");
-    assert!(svg.starts_with("<svg"), "got: {}", &svg[..svg.len().min(40)]);
+    assert!(
+        svg.starts_with("<svg"),
+        "got: {}",
+        &svg[..svg.len().min(40)]
+    );
 }
 
 /// PTE-API-013: `-` is stdout, and then stdout carries the SVG and nothing else
@@ -164,7 +168,11 @@ fn tracing_to_dash_puts_only_the_svg_on_stdout() {
 
     assert_eq!(run.code, 0, "stderr was: {}", run.stderr);
     let svg = run.stdout_text();
-    assert!(svg.starts_with("<svg"), "got: {}", &svg[..svg.len().min(40)]);
+    assert!(
+        svg.starts_with("<svg"),
+        "got: {}",
+        &svg[..svg.len().min(40)]
+    );
     assert!(svg.trim_end().ends_with("</svg>"));
     assert!(
         !svg.contains("pte:"),
@@ -180,10 +188,7 @@ fn the_report_can_take_stdout_when_the_svg_took_a_file() {
     let input = scratch.write("in.ppm", &ppm_fixture());
     let output = scratch.path("out.svg");
 
-    let run = pte(
-        &["trace", "--report", "-", &s(&input), &s(&output)],
-        None,
-    );
+    let run = pte(&["trace", "--report", "-", &s(&input), &s(&output)], None);
 
     assert_eq!(run.code, 0, "stderr was: {}", run.stderr);
     let report: serde_json::Value =
@@ -282,10 +287,7 @@ fn every_svg_the_engine_writes_passes_validate() {
     let input = scratch.write("in.ppm", &ppm_fixture());
     for profile in ["flat-illustration", "coloring-book", "pixel-art", "logo"] {
         let svg = scratch.path(&format!("{profile}.svg"));
-        let traced = pte(
-            &["trace", "--profile", profile, &s(&input), &s(&svg)],
-            None,
-        );
+        let traced = pte(&["trace", "--profile", profile, &s(&input), &s(&svg)], None);
         assert_eq!(traced.code, 0, "{profile}: {}", traced.stderr);
         assert_eq!(
             pte(&["validate", &s(&svg)], None).code,
@@ -305,13 +307,7 @@ fn an_unimplemented_profile_is_refused_not_downgraded() {
     let output = scratch.path("out.svg");
 
     let run = pte(
-        &[
-            "trace",
-            "--profile",
-            "engraving",
-            &s(&input),
-            &s(&output),
-        ],
+        &["trace", "--profile", "engraving", &s(&input), &s(&output)],
         None,
     );
 
@@ -454,10 +450,14 @@ fn profiles_json_is_machine_readable_and_names_what_is_not_implemented() {
     let map = value.as_object().expect("an object keyed by profile");
     assert!(map.contains_key("flat-illustration"));
     assert!(
-        map.values().any(|v| v["implemented"] == serde_json::json!(false)),
+        map.values()
+            .any(|v| v["implemented"] == serde_json::json!(false)),
         "§0.2: profiles this build does not implement are listed as such"
     );
-    assert_eq!(map["flat-illustration"]["implemented"], serde_json::json!(true));
+    assert_eq!(
+        map["flat-illustration"]["implemented"],
+        serde_json::json!(true)
+    );
 }
 
 /// Without `--json` the listing is for a human, so it goes to stderr and stdout
@@ -555,10 +555,7 @@ fn two_identical_invocations_produce_identical_bytes_and_digests() {
 
     let run = |tag: &str| {
         let report = scratch.path(&format!("report-{tag}.json"));
-        let out = pte(
-            &["trace", "--report", &s(&report), &s(&input), "-"],
-            None,
-        );
+        let out = pte(&["trace", "--report", &s(&report), &s(&input), "-"], None);
         assert_eq!(out.code, 0, "stderr was: {}", out.stderr);
         (out.stdout, std::fs::read(&report).expect("a report"))
     };

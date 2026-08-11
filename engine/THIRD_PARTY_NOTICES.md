@@ -13,7 +13,6 @@ and must not pull a GPL or LGPL closure (PTE-LIC-003).
 | Crate | Licence | Used by | Why | Review note |
 |---|---|---|---|---|
 | `blake3` | CC0-1.0 OR Apache-2.0 OR Apache-2.0-with-LLVM-exception | `palette-tracer-core` | Semantic digest hash, Appendix F.4 | `default-features = false` disables `rayon` and `std`-only accelerations, so the build stays single-threaded and deterministic across targets (PTE-DET-001). Public-domain-equivalent primary licence; no copyleft closure. |
-| `kurbo` | MIT OR Apache-2.0 | `palette-tracer-geometry` | Bézier evaluation, flattening, and curve/point distance queries used by the §11 fitter | Hidden entirely behind `palette_tracer_core::ir::PathSegment`; no `kurbo` type appears in any public signature outside the geometry crate (PTE-ARCH-011). Pure Rust, no build script, builds for wasm32. |
 | `serde` | MIT OR Apache-2.0 | `core`, `cli`, `wasm` | Config and report schemas (§6.3, §6.5) | Derives are applied only to stable schema types. `default-features = false` keeps `std` explicit. |
 | `serde_json` | MIT OR Apache-2.0 | `core`, `cli`, `wasm` | JSON form of the config and the trace report (Appendix A) | Arbitrary-precision and preserve-order features are off. |
 
@@ -25,6 +24,15 @@ and must not pull a GPL or LGPL closure (PTE-LIC-003).
 
 ## Deliberately absent
 
+* **No curve library.** `kurbo` was declared in the workspace manifest for the
+  §11 fitter and is *not* used; the declaration has been removed rather than
+  left standing over unused code. Nearest-point queries on a cubic are a quintic
+  root solve, and a library's iteration count and convergence test are not part
+  of its API contract — "accurate to 1e-9" is not the same property as "the same
+  decision on every target", and the semantic digest is a decision (PTE-DET-004).
+  `palette-tracer-geometry` evaluates, flattens and measures with closed-form
+  arithmetic and fixed bounded loops, under a proven flattening bound
+  (`docs/notes/curve-fitting.md`).
 * **No renderer.** `resvg` is not a dependency. The seam and coverage tests use
   a first-party dev-only rasteriser in `palette-tracer-svg/tests`. The
   consequence is recorded honestly: the §18.7 cross-renderer compatibility

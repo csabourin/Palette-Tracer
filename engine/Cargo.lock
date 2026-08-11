@@ -182,6 +182,7 @@ version = "0.1.0"
 dependencies = [
  "palette-tracer-color",
  "palette-tracer-core",
+ "palette-tracer-geometry",
  "palette-tracer-segment",
  "palette-tracer-svg",
  "palette-tracer-topology",
@@ -219,6 +220,9 @@ dependencies = [
 [[package]]
 name = "palette-tracer-geometry"
 version = "0.1.0"
+dependencies = [
+ "palette-tracer-core",
+]
 
 [[package]]
 name = "palette-tracer-segment"

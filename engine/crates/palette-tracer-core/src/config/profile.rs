@@ -601,6 +601,17 @@ impl Profile {
             });
         }
 
+        // PTE-NO-042. §11.4 lists the circular arc between the line and the
+        // cubic; this build fits lines and cubics only. Accepting the request
+        // and quietly emitting cubics would be exactly the silent substitution
+        // the §33 list exists to prevent.
+        if geometry.allow_arcs {
+            return Err(ConfigError::UnsupportedInThisBuild {
+                field: "geometry.allowArcs",
+                requirement: "PTE-GEO-004 (§11.4 circular arc model)",
+            });
+        }
+
         let output = EffectiveOutput {
             precision: r.pick(
                 "output.precision",

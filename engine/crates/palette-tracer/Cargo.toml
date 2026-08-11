@@ -13,6 +13,7 @@ palette-tracer-core.workspace = true
 palette-tracer-color.workspace = true
 palette-tracer-segment.workspace = true
 palette-tracer-topology.workspace = true
+palette-tracer-geometry.workspace = true
 palette-tracer-svg.workspace = true
 
 [dev-dependencies]
