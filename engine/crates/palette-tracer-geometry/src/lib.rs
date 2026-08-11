@@ -36,8 +36,9 @@
 //!   and the cubic. This build fits lines and cubics only. `allow_arcs` is
 //!   reported as unimplemented rather than accepted and ignored (PTE-NO-042),
 //!   and the profile that would ask for it is told so.
-//! * **Primitive recognition (§11.7).** No rectangle, circle or polygon is
-//!   recognised as such; PTE-GEO-010 and PTE-GEO-011 are not implemented.
+//! * **Primitive recognition (§11.7).** Complete circles are recognised when
+//!   support, displacement and complexity gates pass. Rectangles, ellipses,
+//!   rounded rectangles, polygons and repeated radii remain absent.
 //! * **Subpixel evidence (§10).** Sample positions come from the pixel grid.
 //!   Fitting makes the geometry *compact and smooth*; it does not make it
 //!   *subpixel-accurate*, and the report keeps saying `crisp_grid` because that
@@ -52,6 +53,7 @@
 pub mod chain;
 pub mod curves;
 pub mod models;
+pub mod primitives;
 pub mod segmentation;
 
 use palette_tracer_core::control::{TraceControl, check_cancel};
@@ -59,6 +61,7 @@ use palette_tracer_core::error::TraceError;
 use palette_tracer_core::ir::{ChainId, CurveChain, Point, Topology};
 
 pub use chain::{Samples, detect_corners};
+pub use primitives::{PrimitiveOptions, PrimitiveStats, recognize_primitives};
 pub use segmentation::{Fitted, fit_chain};
 
 /// Settings the fitter reads (§11, Appendix G.1).

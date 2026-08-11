@@ -114,7 +114,7 @@ impl Default for AlgorithmVersions {
             segmentation: Cow::Borrowed("pte-watershed-rag/1"),
             topology: Cow::Borrowed("pte-dcel/1"),
             boundary: Cow::Borrowed("pte-coverage/1"),
-            curves: Cow::Borrowed("pte-hybrid-fit/1"),
+            curves: Cow::Borrowed("pte-hybrid-fit-circle-primitives/2"),
         }
     }
 }

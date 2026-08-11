@@ -5,9 +5,10 @@ Design note for `palette-tracer-geometry`, with the §34.2 contents.
 **Requirements:** PTE-GEO-001 through PTE-GEO-009, PTE-GEO-012, PTE-GEO-013,
 PTE-GEO-014. §11.1–§11.6, §11.8. Consumed by §31.5's complexity gates.
 
-**Not covered here:** §11.7 primitive recognition (PTE-GEO-010/011) and the
-§11.4 circular arc model. Neither is implemented; `Profile::expand` refuses
-`geometry.allowArcs` by name, and `UNIMPLEMENTED` lists both.
+**Not covered here:** §11.7 primitive recognition and the §11.4 circular arc
+candidate. Complete-circle recognition now has its own design note,
+`primitive-recognition.md`; the arc candidate remains unimplemented and
+`Profile::expand` refuses `geometry.allowArcs` by name.
 
 ---
 
@@ -213,8 +214,10 @@ depth 10, so no single candidate can consume unbounded work (PTE-GEO-005).
    reconstructed and optimised before fitting; crisp and low-confidence samples
    stay on pixel-cell interfaces. `BoundaryEvidence` and the report distinguish
    those outcomes. See `subpixel-antialias.md` and the measured §31.2 gates.
-3. **No arcs, no primitives.** §11.4's arc model and §11.7's primitive
-   recognition are absent. A circle is a handful of cubics, not a circle.
+3. **No generic arcs; primitive recognition is circle-only.** §11.4's arc
+   candidate is absent. §11.7 can retain a sufficiently supported complete
+   circle semantically, but rectangles, ellipses, rounded rectangles, polygons
+   and repeated radii remain unimplemented. See `primitive-recognition.md`.
 4. **Corner detection needs about six pixels of chain.** Fewer than five samples
    or fewer than two supported scales means no corner is declared, because what
    remains is the three-point angle PTE-GEO-002 forbids. Short chains are fitted

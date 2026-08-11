@@ -6,7 +6,7 @@
 
 use super::geom::{CurveChain, Rect};
 use super::paint::Paint;
-use super::topology::{FaceId, PaletteId};
+use super::topology::{EdgeId, FaceId, PaletteId};
 use serde::{Deserialize, Serialize};
 
 /// Physical output size, when the caller declared one (PTE-FAB-001).
@@ -84,6 +84,8 @@ pub struct StrokePath {
 pub enum Primitive {
     /// An axis-aligned rectangle.
     Rect {
+        /// Topological face this primitive replaces.
+        face: FaceId,
         /// Its bounds.
         bounds: Rect,
         /// Corner radius, if rounded.
@@ -93,12 +95,57 @@ pub enum Primitive {
     },
     /// A circle or ellipse.
     Ellipse {
+        /// Topological face this primitive replaces.
+        face: FaceId,
         /// Centre.
         center: super::geom::Point,
         /// Semi-axes.
         radii: super::geom::Vec2,
         /// Paint.
         paint: Paint,
+    },
+    /// A circle, kept distinct from an ellipse for editability.
+    Circle {
+        /// Topological face this primitive replaces.
+        face: FaceId,
+        /// Centre.
+        center: super::geom::Point,
+        /// Radius, strictly positive.
+        radius: f64,
+        /// Paint.
+        paint: Paint,
+    },
+}
+
+/// Geometry recognised from one complete face boundary before SVG lowering.
+///
+/// This paint-free record crosses from the geometry stage to the lowering
+/// stage. Keeping it typed is PTE-GEO-011: a circle does not become cubics in
+/// the gap between recognition and serialisation.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PrimitiveRecognition {
+    /// Face whose sole outer boundary supplied the evidence.
+    pub face: FaceId,
+    /// Shared edge carrying that boundary, used by the neighbour-consistency
+    /// gate in lowering (PTE-GEO-010).
+    pub source_edge: EdgeId,
+    /// Sweep of the source edge in its stored forward direction. The reverse
+    /// face flips it when lowering the same exact circle as an SVG arc path.
+    pub source_sweep: bool,
+    /// Recognised geometry.
+    pub geometry: PrimitiveGeometry,
+}
+
+/// Paint-free semantic primitive geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum PrimitiveGeometry {
+    /// A complete circle.
+    Circle {
+        /// Centre in image coordinates.
+        center: super::geom::Point,
+        /// Radius, strictly positive.
+        radius: f64,
     },
 }
 
@@ -221,7 +268,28 @@ impl VectorDocument {
             let finite = match e {
                 Element::FilledFace(f) => f.boundaries.iter().all(CurveChain::is_finite),
                 Element::Stroke(s) => s.geometry.is_finite() && s.width.is_finite(),
-                Element::Primitive(_) | Element::Group(_) => true,
+                Element::Primitive(p) => match p {
+                    Primitive::Rect {
+                        bounds,
+                        corner_radius,
+                        ..
+                    } => {
+                        bounds.x.is_finite()
+                            && bounds.y.is_finite()
+                            && bounds.width.is_finite()
+                            && bounds.height.is_finite()
+                            && bounds.width > 0.0
+                            && bounds.height > 0.0
+                            && corner_radius.is_none_or(|r| r.is_finite() && r >= 0.0)
+                    }
+                    Primitive::Ellipse { center, radii, .. } => {
+                        center.is_finite() && radii.is_finite() && radii.x > 0.0 && radii.y > 0.0
+                    }
+                    Primitive::Circle { center, radius, .. } => {
+                        center.is_finite() && radius.is_finite() && *radius > 0.0
+                    }
+                },
+                Element::Group(_) => true,
             };
             ok &= finite;
         });
@@ -315,6 +383,17 @@ mod tests {
         if let Element::FilledFace(f) = &mut doc.layers[0].elements[0] {
             f.boundaries[0].start.x = f64::NAN;
         }
+        assert!(!doc.all_coordinates_finite());
+    }
+
+    #[test]
+    fn an_invalid_circle_radius_fails_the_finiteness_gate() {
+        let doc = document(vec![Element::Primitive(Primitive::Circle {
+            face: FaceId(1),
+            center: Point::new(2.0, 2.0),
+            radius: -1.0,
+            paint: Paint::Solid(Color::BLACK),
+        })]);
         assert!(!doc.all_coordinates_finite());
     }
 

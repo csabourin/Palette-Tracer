@@ -188,10 +188,6 @@ impl Profile {
                 "PTE-GRAD-009 (§14.7 experimental shading)",
             ),
             (
-                Modifier::RecognizePrimitives,
-                "PTE-GEO-010 (§11.7 primitive recognition)",
-            ),
-            (
                 Modifier::PhysicalScaleKnown,
                 "PTE-FAB-001 (§16 fabrication)",
             ),
@@ -861,11 +857,7 @@ mod tests {
 
     #[test]
     fn unimplemented_modifiers_are_refused() {
-        for modifier in [
-            Modifier::PreferStrokes,
-            Modifier::AllowPortableGradients,
-            Modifier::RecognizePrimitives,
-        ] {
+        for modifier in [Modifier::PreferStrokes, Modifier::AllowPortableGradients] {
             let mut config = TraceConfig::default();
             config.modifiers.push(modifier);
             if modifier == Modifier::AllowPortableGradients {
@@ -879,6 +871,14 @@ mod tests {
                 modifier.as_str()
             );
         }
+    }
+
+    #[test]
+    fn primitive_recognition_is_an_implemented_modifier() {
+        let mut config = TraceConfig::default();
+        config.modifiers.push(Modifier::RecognizePrimitives);
+        let effective = expand(&config);
+        assert!(effective.modifiers.contains(&Modifier::RecognizePrimitives));
     }
 
     #[test]

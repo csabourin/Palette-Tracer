@@ -1,16 +1,68 @@
 # Handoff
 
 **Session date:** 2026-08-11
-**Branch:** `claude/qa-pr-20-21-6zws2f`, from merged PR #21's `master`
-**Working slice:** QA of merged PR #20 and PR #21, and the fixes it found. PR
-#20 was correct as described. PR #21's junction pass had two defects that a
-merged change should not carry, plus four smaller ones; all seven are fixed
-here with regression tests. No Python application source was read or changed.
+**Branch:** `agent/recognize-circle-primitives`, from merged PR #22's `master`
+**Working slice:** PR C, the first §11.7 primitive-recognition slice: complete
+circles carried as typed geometry from the shared topology through the semantic
+digest and SVG. No Python application source was read or changed.
 
-The two slices before this one are described below because their decisions are
-still relevant context.
+## PR C: complete-circle primitive recognition
 
-## What the QA found, and what changed
+`logo` and the now-implemented `recognize-primitives` modifier run recognition
+before generic §11 fitting. A centred, RMS-normalised Kåsa solve proposes a
+circle for a closed one-edge face. Acceptance requires full angular support,
+consistent signed turning, the configured radial displacement bound and the
+topology/material-complexity gates from §11.7. Every float decision uses
+`QuantKey`; candidates and samples charge the global work budget. The design,
+failure modes, tie rules, complexity and alternatives required by §34.2 are in
+`engine/docs/notes/primitive-recognition.md`.
+
+The result remains typed as `PrimitiveRecognition` until lowering, then as
+`Primitive::Circle`. It reaches the semantic digest and serialises as SVG
+`<circle>`. A neighbouring opaque face traverses the same recognized boundary
+as two exact arcs, so the primitive does not create a second, independently
+fitted copy of a shared interface (§11.8). Lowering indexes recognitions by face
+and edge with ordered maps rather than scanning all faces for every primitive.
+
+The decisive test regenerates the analytic `curves/circle-subpixel-1` raster
+and passes it through the real extractor. It recovers centre and radius within
+`0.20 px`, emits one semantic circle and records one primitive in the report.
+A second end-to-end test proves the opaque neighbour reuses exactly two arcs
+with zero exposed or overlapping diagnostic pixels. Unit gates reject partial
+arcs and squares, prove reversal equivalence, and exercise resource exhaustion.
+This intentionally does **not** implement §11.4 generic arcs, ellipses,
+rectangles, rounded rectangles, polygons or repeated-radius inference.
+
+All release gates passed on this exact tree:
+
+```
+make engine-test        417 tests + 2 doctests passed, 0 failed
+make engine-lint        cargo fmt and all-target Clippy clean
+make engine-wasm        workspace clean for wasm32-unknown-unknown
+make engine-deny        advisories ok, bans ok, licenses ok, sources ok
+make engine-corpus      13 fixtures, zero fitting fallback everywhere
+make engine-parity      13 fixtures, native and wasm32-wasip1 agree
+git diff --check        clean
+```
+
+The corpus census is unchanged because it runs `flat-illustration` without the
+opt-in modifier; PR C changes representation only when recognition is enabled.
+The semantic algorithm version and feature set were bumped as required by
+PTE-DET-004.
+
+Ten user-supplied 1536×1024 PNG presentation sheets were inspected but not
+committed. They are composited test cards, not raw fixtures: one advertised as
+transparent is RGB with a baked checkerboard, another advertised as JPEG is a
+PNG container, and several visibly embed third-party marks or character art.
+The user confirmed authorship/licence ownership of their files, but that does
+not make those embedded third-party elements suitable for an MIT clean-room
+corpus. A follow-up should recreate clean-room raw fixtures with manifests and
+commit the generator/source assets, not rename these sheets as engine inputs.
+
+The prior QA and §10 slices remain below because their lessons still constrain
+new geometry work.
+
+## Prior QA: what it found, and what changed
 
 **A loop edge at a junction came apart.** `optimize_junctions` collected
 incident edges with `if start == v {..} else if end == v {..}`, so an edge whose
@@ -308,10 +360,20 @@ The Python suite was not re-run; nothing under `palette_trace/`, `tests/` or
 
 ## What to build next
 
-**§11.7 primitive recognition is now the natural next geometry slice.** A
-circle is still emitted as cubics rather than represented semantically as a
-circle, and PTE-GEO-010/011 remains unimplemented. That slice needs an IR model,
-recognition gates and serialization that preserves the semantic primitive.
+**Continue §11.7 from the circle vertical slice, or add §11.4 generic arcs.**
+Complete circles now remain semantic, but partial circular boundaries still
+fall through to cubics. The highest-value next slice is an arc candidate with
+bidirectional displacement validation, because it can then support ellipses and
+rounded rectangles without weakening the shared-boundary invariant. Extend the
+typed recognition object and neighbour reuse rather than recognizing only at
+SVG serialisation time. Rectangles and regular polygons are the cheaper
+alternative if editability breadth matters more than curved-boundary quality.
+
+**A clean-room real-world corpus is still missing.** If the supplied test-card
+ideas are retained, recreate them as raw, first-party fixtures with accurate
+alpha/container semantics, explicit manifests and no embedded third-party
+marks or character art. Do not commit the inspected presentation sheets as if
+they were raw input cases.
 
 The closest §10 follow-up is evidence pooling: the two-colour compositing
 transfer is still selected per pixel, and the multi-colour junction model is

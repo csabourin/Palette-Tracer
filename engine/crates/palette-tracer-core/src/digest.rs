@@ -310,11 +310,13 @@ fn write_element(w: &mut DigestWriter, element: &Element) -> Result<(), Numerica
             // the digest records the semantic form, not a cubic approximation.
             match p {
                 crate::ir::Primitive::Rect {
+                    face,
                     bounds,
                     corner_radius,
                     paint,
                 } => {
                     w.tag("rect");
+                    w.u64(u64::from(face.0));
                     for v in [bounds.x, bounds.y, bounds.width, bounds.height] {
                         w.coord(v)?;
                     }
@@ -325,12 +327,27 @@ fn write_element(w: &mut DigestWriter, element: &Element) -> Result<(), Numerica
                     write_paint(w, paint)?;
                 }
                 crate::ir::Primitive::Ellipse {
+                    face,
                     center,
                     radii,
                     paint,
                 } => {
                     w.tag("ellipse");
+                    w.u64(u64::from(face.0));
                     for v in [center.x, center.y, radii.x, radii.y] {
+                        w.coord(v)?;
+                    }
+                    write_paint(w, paint)?;
+                }
+                crate::ir::Primitive::Circle {
+                    face,
+                    center,
+                    radius,
+                    paint,
+                } => {
+                    w.tag("circle");
+                    w.u64(u64::from(face.0));
+                    for v in [center.x, center.y, *radius] {
                         w.coord(v)?;
                     }
                     write_paint(w, paint)?;
