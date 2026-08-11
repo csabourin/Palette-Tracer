@@ -313,16 +313,57 @@ pub fn two_color_best(
         });
 
     match (linear, encoded) {
-        (Some(l), Some(e)) => {
-            let lk = QuantKey::cost_or_worst(l.mixture.residual);
-            let ek = QuantKey::cost_or_worst(e.mixture.residual);
-            // `<` and not `<=`: a tie keeps the linear hypothesis.
-            Some(if ek < lk { e } else { l })
-        }
+        (Some(l), Some(e)) => Some(if encoded_hypothesis_earns_it(&l, &e) {
+            e
+        } else {
+            l
+        }),
         (Some(l), None) => Some(l),
         (None, Some(e)) => Some(e),
         (None, None) => None,
     }
+}
+
+/// One 8-bit code point in linear light, near the middle of the range.
+///
+/// Below this the two hypotheses are separated by quantisation rather than by
+/// evidence, and PTE-AA-002's rule applies: the estimate is ill-conditioned,
+/// so the declared default stands instead of the noise being amplified.
+const QUANTISATION_FLOOR: f64 = 4.0e-3;
+
+/// How much better the encoded hypothesis must fit before it displaces §10.2's
+/// stated model.
+const MARGIN: f64 = 0.5;
+
+/// Whether the encoded hypothesis has earned the right to replace the linear
+/// one (PTE-AA-002).
+///
+/// The two are not symmetric, and must not be treated as if they were.
+/// §10.2 states the linear-light model, so it is the default and carries no
+/// burden of proof; the encoded hypothesis is a departure from the
+/// specification's model and has to be paid for with evidence.
+///
+/// That asymmetry is doing real work, not just being cautious. When the two
+/// side colours differ mainly in luminance and sit near the neutral axis, all
+/// three channels scale almost together, the encoded blend curve lies within
+/// quantisation of the encoded straight segment, and *both* hypotheses fit the
+/// observation to within a code point. Their coverages do not agree even so:
+/// for a near-neutral pair separated by a factor of forty in luminance the two
+/// differ by around 0.07 at mid-coverage. Picking the smaller of two residuals
+/// that differ only by rounding would make that a coin flip, and §10.3 turns
+/// the coverage straight into a position.
+///
+/// So the encoded hypothesis wins only when the linear one visibly fails --
+/// its residual is above the quantisation floor -- *and* the encoded one
+/// explains what is left materially better. Both comparisons go through
+/// [`QuantKey`] rather than bare floats (PTE-DET-002/003).
+fn encoded_hypothesis_earns_it(linear: &SpacedMixture, encoded: &SpacedMixture) -> bool {
+    let linear_residual = linear.mixture.residual;
+    if QuantKey::cost_or_worst(linear_residual) <= QuantKey::cost_or_worst(QUANTISATION_FLOOR) {
+        return false;
+    }
+    QuantKey::cost_or_worst(encoded.mixture.residual)
+        < QuantKey::cost_or_worst(MARGIN * linear_residual)
 }
 
 /// Barycentric coverage weights over up to four colours (§10.4).

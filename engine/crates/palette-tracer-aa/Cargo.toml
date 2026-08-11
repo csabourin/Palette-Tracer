@@ -1,6 +1,6 @@
 [package]
-name = "palette-tracer"
-description = "The Palette Tracer Engine: a deterministic raster-to-SVG engine with one shared boundary graph"
+name = "palette-tracer-aa"
+description = "Subpixel antialias reconstruction for the Palette Tracer Engine (SPEC section 10)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,11 +11,6 @@ authors.workspace = true
 [dependencies]
 palette-tracer-core.workspace = true
 palette-tracer-color.workspace = true
-palette-tracer-aa.workspace = true
-palette-tracer-segment.workspace = true
-palette-tracer-topology.workspace = true
-palette-tracer-geometry.workspace = true
-palette-tracer-svg.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

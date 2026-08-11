@@ -180,12 +180,22 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "palette-tracer"
 version = "0.1.0"
 dependencies = [
+ "palette-tracer-aa",
  "palette-tracer-color",
  "palette-tracer-core",
  "palette-tracer-geometry",
  "palette-tracer-segment",
  "palette-tracer-svg",
  "palette-tracer-topology",
+ "proptest",
+]
+
+[[package]]
+name = "palette-tracer-aa"
+version = "0.1.0"
+dependencies = [
+ "palette-tracer-color",
+ "palette-tracer-core",
  "proptest",
 ]
 

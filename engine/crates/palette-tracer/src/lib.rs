@@ -25,16 +25,22 @@
 //! to end: validated pixels, colour assignment against an exact or automatic
 //! palette, a minimum-spanning-forest partition, deterministic region merging,
 //! antialias-fringe reassignment, one shared boundary graph with the 2x2
-//! ambiguity resolved by energy, and deterministic SVG.
+//! ambiguity resolved by energy, subpixel boundary reconstruction, and
+//! deterministic SVG.
 //!
 //! Shared chains are then fitted to lines and cubic Béziers with bidirectional
 //! error validation (§11), so a boundary that should be one line is one line.
 //!
+//! Before that, §10 reconstructs subpixel boundary positions: the compositing
+//! transfer is estimated from the evidence, coverage is inverted to a signed
+//! offset in closed form, and §10.5's objective moves each boundary sample
+//! along its own normal inside a trust region. §31.2's synthetic geometry
+//! gates are measured in `tests/subpixel_gates.rs`.
+//!
 //! # What it does not
 //!
-//! Boundary *positions* still come from the pixel grid: subpixel antialias
-//! reconstruction (§10) is **not** implemented, so fitting makes the geometry
-//! compact and smooth without making it subpixel-accurate. Arcs (§11.4),
+//! Junction positions are not optimised (PTE-TOPO-011/012/013), so §10.4's
+//! barycentric weights are computed and not yet consumed. Arcs (§11.4),
 //! primitive recognition (§11.7), strokes (§13), gradients (§14) and
 //! fabrication (§16) are **not** implemented, and anything that would need them
 //! is refused by name at configuration time rather than silently approximated
@@ -87,7 +93,8 @@ pub struct Capabilities {
 /// Reported under `unimplemented` on every trace, so a caller learns what the
 /// engine did *not* do rather than inferring it from silence (§0.2).
 pub const UNIMPLEMENTED: &[&str] = &[
-    "PTE-AA-001..009 (§10 subpixel antialias reconstruction)",
+    "PTE-AA-006 for junctions (§10.4 barycentric weights are computed but \
+     junction positions are PTE-TOPO-011/012/013, which is not implemented)",
     "PTE-GEO-010/011 (§11.7 primitive recognition)",
     "the §11.4 circular arc model; lines and cubics only",
     "PTE-GEO-015..021 (§12 logo and lettering regularization)",
@@ -320,6 +327,49 @@ impl Engine {
         palette_tracer_topology::validate(&extraction.topology)?;
         control.progress(ProgressEvent::StageFinished {
             stage: Stage::Topology,
+        });
+
+        // Stage E.5 (§10): reconstruct subpixel boundary positions before any
+        // fitting happens. Order matters in one direction only -- §11 fits
+        // curves *to* boundary samples, so the samples have to be right first.
+        // Fitting and then re-reconstructing would mean moving a cubic's
+        // control points, which is a different problem with a different error
+        // bound.
+        //
+        // §15 and PTE-TOPO-010: `pixel-art` never borrows the antialias
+        // mixture assumptions. Its boundaries are already labelled
+        // `pixel_art_policy` and are left exactly where the grid put them.
+        let reconstruction = if config.profile == Profile::PixelArt {
+            palette_tracer_aa::ReconstructionStats::default()
+        } else {
+            let face_colors = face_colors(&extraction.topology, segmentation);
+            let stats = palette_tracer_aa::reconstruct(
+                &mut extraction.topology,
+                image,
+                &face_colors,
+                &palette_tracer_aa::ReconstructOptions::default(),
+                control,
+            )?;
+            // PTE-GEO-014's rule applies to any post-extraction change of
+            // shared geometry, and §10.5 is one: the boundary moved, so the
+            // corridor and intersection checks run again rather than being
+            // assumed to still hold.
+            palette_tracer_topology::validate(&extraction.topology)?;
+            stats
+        };
+        // The per-sample counts are not in the report schema, which censuses
+        // edges rather than samples (PTE-AA-009). They are the useful number
+        // for judging how much evidence a trace actually had, so they go out
+        // as progress counters.
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Topology,
+            name: "coverage_constrained_samples",
+            value: u64::from(reconstruction.constrained_samples),
+        });
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Topology,
+            name: "coverage_unconstrained_samples",
+            value: u64::from(reconstruction.unconstrained_samples),
         });
 
         // Stage F (§5.3): fit the shared chains. This replaces geometry and
@@ -745,20 +795,12 @@ impl Engine {
                 )
                 .unwrap_or(0),
             },
-            boundary_sources: BoundarySourceReport {
-                coverage_reconstructed: 0,
-                crisp_grid: if config.profile == Profile::PixelArt {
-                    0
-                } else {
-                    extraction.topology.edges.len() as u32
-                },
-                low_confidence_fallback: 0,
-                pixel_art_policy: if config.profile == Profile::PixelArt {
-                    extraction.topology.edges.len() as u32
-                } else {
-                    0
-                },
-            },
+            // PTE-AA-009: a census of what each boundary's position actually
+            // came from, counted from the edges themselves. It used to be
+            // derived from the profile, which could only ever restate the
+            // configuration; now §10 records its outcome on every edge and
+            // this counts them.
+            boundary_sources: boundary_source_census(&extraction.topology),
             resources: budget.statistics(),
             warnings,
             fallbacks,
@@ -766,4 +808,49 @@ impl Engine {
             semantic_digest: digest.to_owned(),
         }
     }
+}
+
+/// Count each boundary's evidence class (PTE-AA-009).
+fn boundary_source_census(topology: &palette_tracer_core::ir::Topology) -> BoundarySourceReport {
+    use palette_tracer_core::ir::BoundaryEvidence;
+    let mut report = BoundarySourceReport {
+        coverage_reconstructed: 0,
+        crisp_grid: 0,
+        low_confidence_fallback: 0,
+        pixel_art_policy: 0,
+    };
+    for edge in &topology.edges {
+        match edge.confidence.evidence {
+            BoundaryEvidence::CoverageReconstructed => report.coverage_reconstructed += 1,
+            BoundaryEvidence::CrispGrid => report.crisp_grid += 1,
+            BoundaryEvidence::LowConfidenceFallback => report.low_confidence_fallback += 1,
+            BoundaryEvidence::PixelArtPolicy => report.pixel_art_policy += 1,
+            _ => report.crisp_grid += 1,
+        }
+    }
+    report
+}
+
+/// Each face's mean colour as a premultiplied linear sample, indexed by
+/// [`FaceId`], for §10's mixture evidence.
+///
+/// The exterior face has no raster region and gets a transparent entry, which
+/// `reconstruct` skips by identity rather than by colour.
+fn face_colors(
+    topology: &palette_tracer_core::ir::Topology,
+    segmentation: &Segmentation,
+) -> Vec<palette_tracer_color::alpha::PremulLinearRgba> {
+    topology
+        .faces
+        .iter()
+        .map(|face| {
+            if face.exterior {
+                return palette_tracer_color::alpha::PremulLinearRgba::TRANSPARENT;
+            }
+            segmentation.summaries.get(face.region.index()).map_or(
+                palette_tracer_color::alpha::PremulLinearRgba::TRANSPARENT,
+                palette_tracer_segment::RegionSummary::premultiplied_mean,
+            )
+        })
+        .collect()
 }

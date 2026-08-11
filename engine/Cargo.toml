@@ -5,6 +5,7 @@ members = [
     "crates/palette-tracer-color",
     "crates/palette-tracer-segment",
     "crates/palette-tracer-topology",
+    "crates/palette-tracer-aa",
     "crates/palette-tracer-geometry",
     "crates/palette-tracer-svg",
     "crates/palette-tracer",
@@ -25,6 +26,7 @@ palette-tracer-core = { path = "crates/palette-tracer-core", version = "0.1.0" }
 palette-tracer-color = { path = "crates/palette-tracer-color", version = "0.1.0" }
 palette-tracer-segment = { path = "crates/palette-tracer-segment", version = "0.1.0" }
 palette-tracer-topology = { path = "crates/palette-tracer-topology", version = "0.1.0" }
+palette-tracer-aa = { path = "crates/palette-tracer-aa", version = "0.1.0" }
 palette-tracer-geometry = { path = "crates/palette-tracer-geometry", version = "0.1.0" }
 palette-tracer-svg = { path = "crates/palette-tracer-svg", version = "0.1.0" }
 palette-tracer = { path = "crates/palette-tracer", version = "0.1.0" }
