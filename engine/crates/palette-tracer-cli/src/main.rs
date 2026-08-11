@@ -192,20 +192,29 @@ fn parse(args: &[String]) -> Result<Options, TraceError> {
             }
             "--palette" => {
                 let list = value()?;
-                overrides.palette = Some(
-                    list.split(',')
-                        .filter(|s| !s.trim().is_empty())
-                        .enumerate()
-                        .map(|(i, color)| PaletteEntrySpec {
-                            id: i as u32,
-                            color: color.trim().to_owned(),
-                            pinned: true,
-                            reach: None,
-                            role: PaletteRole::Fill,
-                            priority: 0,
-                        })
-                        .collect(),
-                );
+                let entries: Vec<PaletteEntrySpec> = list
+                    .split(',')
+                    .filter(|s| !s.trim().is_empty())
+                    .enumerate()
+                    .map(|(i, color)| PaletteEntrySpec {
+                        id: i as u32,
+                        color: color.trim().to_owned(),
+                        pinned: true,
+                        reach: None,
+                        role: PaletteRole::Fill,
+                        priority: 0,
+                    })
+                    .collect();
+                // An empty list is still an override, so it would silently
+                // clear a config file's palette and then fail three layers
+                // down as "mode is `fixed` but no entries were supplied" --
+                // blaming the file for what the flag did. Refuse it by name.
+                if entries.is_empty() {
+                    return Err(TraceError::Config(ConfigError::Palette {
+                        reason: "`--palette` was given no colours",
+                    }));
+                }
+                overrides.palette = Some(entries);
             }
             "--max-colors" => {
                 let n = value()?;

@@ -47,14 +47,39 @@ intersection
 argmin_x Σ c_i ||n_i · x - t_i||².
 ```
 
-This is one deterministic 2×2 solve. Parallel evidence is rejected by a
-quantised determinant gate. There is no convergence loop.
+This is one deterministic 2×2 solve. There is no convergence loop.
+
+Parallel evidence is rejected by a *scale-free* gate. The normals are unit, so
+the normal equations satisfy `xx + yy = Σc_i` and `det = Σ_{i<j} c_i c_j
+sin²θ_ij`. Comparing `det` to a fixed epsilon would therefore test how
+confident the lines are as much as how well they separate, and two barely
+trusted, nearly parallel lines would clear it -- returning a point located only
+by the trust radius, which is a whole pixel, and so further from the truth than
+the grid corner being replaced. Dividing by `(Σc_i)²` removes the confidence
+scale and leaves the question that matters: do these lines cross at an angle?
+At two equal weights the threshold admits roughly 12° and up.
 
 The barycentric estimate remains essential: at least one source pixel touching
 the grid junction must have three active weights and an acceptable residual.
 It gates the solve and scales the line confidences. Thus a crisp three-region
 grid corner, whose samples are all one- or two-colour, stays pinned rather than
 being moved by an accidental extrapolation.
+
+## Loop edges
+
+A shared edge's two ends can be the *same* junction: the whole boundary of a
+region that meets everything else at one corner is one closed chain through one
+vertex, which two blocks meeting corner to corner produce directly. Such an
+edge is incident to the vertex twice, and both ends move. Recording it once
+moved only its start, leaving the far end on the grid corner: the closed chain
+came apart, and the Appendix B check `chain_starts_at_its_origin` -- which
+reruns after §10 -- failed the whole trace.
+
+The incidence list therefore carries one entry per *end*, which also makes its
+length equal the vertex degree, since degree counts half-edges and a loop
+contributes two. A vertex whose incidence does not account for its degree is
+left on the grid rather than solved from partial evidence.
+`a_loop_edge_at_a_junction_stays_closed` is the case end to end.
 
 ## Evidence retained across the two passes
 
@@ -81,6 +106,16 @@ The candidate is accepted only if all of these hold:
    an opposite collinear pair cannot fold onto the same side;
 4. every changed first segment avoids every segment not incident to the old
    shared vertex.
+
+Gate 4 is answered against a uniform-grid index over the boundary segments,
+built once per reconstruct call. Everything that can answer it is within a
+couple of pixels of the junction -- the candidate is inside the trust radius and
+the ray's far end is one grid step out -- but scanning every chain to find that
+out made the pass quadratic in image content: on a 512×512 antialiased mosaic
+the scan alone was 94% of the whole trace and reclassified no boundary.
+Insertion inflates each segment's box by the trust radius, which is the most an
+accepted solve can move an endpoint, so the index stays valid for the whole
+pass without being rebuilt as the geometry under it moves.
 
 The comparisons that decide these gates use `QuantKey`. Incident edges and
 face colours are visited in arena or `BTreeSet` order, so no allocation or hash
@@ -122,3 +157,9 @@ interior boundaries are classified as coverage reconstructed.
 * The crossing guard operates on the pre-fit polylines, which is the complete
   representation at this stage. The existing validator still reruns after §10
   and again after §11 as required by PTE-GEO-014.
+* Junctions are solved in vertex order and each one sees the geometry the
+  previous ones left. The order is a property of the raster, so the result is
+  deterministic, but it is a sweep and not a joint solve over all junctions.
+* §10 charges the work budget per boundary sample inverted and per junction
+  probed, so the stage is bounded like every other one. The charges are coarse
+  relative costs, not calibrated against PTE-PERF-003, which is still open.

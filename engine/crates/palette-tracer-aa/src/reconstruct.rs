@@ -91,6 +91,7 @@ use palette_tracer_core::image::ImageView;
 use palette_tracer_core::ir::{
     BoundaryEvidence, CurveChain, FaceId, PathSegment, Point, Topology, VertexId,
 };
+use palette_tracer_core::limits::{WorkBudget, cost};
 use std::collections::BTreeSet;
 
 /// How far a boundary sample may move from where the raster put it, in pixels.
@@ -117,6 +118,29 @@ const SWEEPS: usize = 8;
 /// Confidence below which a sample carries no usable evidence and the crisp
 /// grid position stands (PTE-AA-002, PTE-AA-005).
 const MIN_CONFIDENCE: f64 = 0.15;
+
+/// How well separated the incident directions at a junction must be before
+/// their intersection counts as located.
+///
+/// The §10.4 normal equations are accumulated with unit normals weighted by
+/// confidence, so `xx + yy` is the total weight and the determinant is
+/// `Σ_{i<j} w_i w_j sin²θ_ij`. Testing the determinant against a fixed epsilon
+/// therefore measures *confidence magnitude* as much as geometry: two barely
+/// trusted, nearly parallel lines clear an absolute threshold and then hand
+/// back an intersection located only by the trust radius, which is a whole
+/// pixel -- further from the truth than the grid corner being replaced.
+/// Dividing by the squared total weight makes the gate scale-free, so it asks
+/// the question that matters: do these lines actually cross at an angle? At
+/// two equal weights this admits roughly 12° and up.
+const MIN_JUNCTION_CONDITIONING: f64 = 0.01;
+
+/// Side of one spatial-index bucket, in pixels. Boundary segments before §11
+/// are unit grid steps, so a few pixels puts a handful in each bucket.
+const INDEX_CELL: f64 = 8.0;
+
+/// Ceiling on the index's bucket count, so a very large raster widens its cells
+/// rather than allocating a bucket per few pixels.
+const MAX_INDEX_BUCKETS: f64 = 1_048_576.0;
 
 /// How far inside `[0, 1]` a coverage must be to carry subpixel information.
 ///
@@ -541,82 +565,292 @@ fn segments_intersect(a: Point, b: Point, c: Point, d: Point) -> bool {
         || (cd_b == 0 && on_segment(c, b, d))
 }
 
-/// PTE-TOPO-013's local legality gate for one proposed shared junction.
-fn legal_junction_move(
-    topology: &Topology,
-    vertex: VertexId,
-    candidate: Point,
-    incident: &[(usize, bool, Point)],
-) -> bool {
-    let anchor = topology.vertices[vertex.index()].position;
-    if !candidate.is_finite()
-        || QuantKey::geometry(anchor.distance(candidate)).map_or(true, |distance| {
-            distance > QuantKey::geometry(TRUST_RADIUS).unwrap_or(distance)
-        })
-    {
-        return false;
+/// A uniform-grid index over the boundary segments, for PTE-TOPO-013's
+/// crossing test.
+///
+/// The guard asks one question per incident ray -- does this moved first
+/// segment cross something it must not? -- and everything that can answer it
+/// lies within a couple of pixels of the junction: the candidate is inside the
+/// trust radius and the ray's far end is one grid step out. Scanning every
+/// chain to answer it made the junction pass quadratic in image content. On a
+/// 512x512 antialiased mosaic that one scan was 94% of the whole trace and
+/// changed no boundary's classification.
+///
+/// Insertion inflates each segment's box by [`TRUST_RADIUS`], which is the most
+/// an accepted solve can move an endpoint. A segment therefore stays in every
+/// bucket it can reach for the whole pass, and the index is built once and
+/// never rebuilt even though the geometry under it moves.
+struct SegmentIndex {
+    cell: f64,
+    min_x: f64,
+    min_y: f64,
+    cols: usize,
+    rows: usize,
+    /// `(chain, first point of the segment)` per bucket, in insertion order.
+    buckets: Vec<Vec<(u32, u32)>>,
+}
+
+impl SegmentIndex {
+    fn empty() -> Self {
+        Self {
+            cell: INDEX_CELL,
+            min_x: 0.0,
+            min_y: 0.0,
+            cols: 0,
+            rows: 0,
+            buckets: Vec::new(),
+        }
     }
 
-    let mut rays = Vec::with_capacity(incident.len());
-    for &(edge_index, at_start, original_near) in incident {
-        let Some(points) =
-            polyline_points(&topology.chains[topology.edges[edge_index].geometry.index()])
-        else {
+    fn build(polylines: &[Option<Vec<Point>>]) -> Self {
+        let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+        let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for point in polylines.iter().flatten().flatten() {
+            if !point.is_finite() {
+                return Self::empty();
+            }
+            min_x = min_x.min(point.x);
+            min_y = min_y.min(point.y);
+            max_x = max_x.max(point.x);
+            max_y = max_y.max(point.y);
+        }
+        if !min_x.is_finite() || !min_y.is_finite() {
+            return Self::empty();
+        }
+        // The inflation is applied to what goes in, so the extent has to cover
+        // it too or an inflated box would clamp onto the border cells.
+        min_x -= TRUST_RADIUS;
+        min_y -= TRUST_RADIUS;
+        max_x += TRUST_RADIUS;
+        max_y += TRUST_RADIUS;
+
+        let width = max_x - min_x;
+        let height = max_y - min_y;
+        let approximate = (width / INDEX_CELL + 2.0) * (height / INDEX_CELL + 2.0);
+        let cell = if approximate > MAX_INDEX_BUCKETS {
+            INDEX_CELL * (approximate / MAX_INDEX_BUCKETS).sqrt()
+        } else {
+            INDEX_CELL
+        };
+        if !cell.is_finite() || cell <= 0.0 {
+            return Self::empty();
+        }
+        let cols = (width / cell).floor() as usize + 1;
+        let rows = (height / cell).floor() as usize + 1;
+
+        let mut index = Self {
+            cell,
+            min_x,
+            min_y,
+            cols,
+            rows,
+            buckets: vec![Vec::new(); cols * rows],
+        };
+        for (chain, points) in polylines.iter().enumerate() {
+            let Some(points) = points else { continue };
+            for (i, pair) in points.windows(2).enumerate() {
+                index.insert(chain as u32, i as u32, pair[0], pair[1]);
+            }
+        }
+        index
+    }
+
+    /// Inclusive column and row range covering the box of `a`..`b`, grown by
+    /// `pad` and clamped to the grid.
+    fn range(&self, a: Point, b: Point, pad: f64) -> Option<(usize, usize, usize, usize)> {
+        if self.cols == 0 || self.rows == 0 {
+            return None;
+        }
+        let bucket = |value: f64, origin: f64, limit: usize| -> usize {
+            let raw = (value - origin) / self.cell;
+            if raw <= 0.0 {
+                0
+            } else if raw >= limit as f64 {
+                limit - 1
+            } else {
+                raw.floor() as usize
+            }
+        };
+        if !a.is_finite() || !b.is_finite() {
+            return None;
+        }
+        Some((
+            bucket(a.x.min(b.x) - pad, self.min_x, self.cols),
+            bucket(a.x.max(b.x) + pad, self.min_x, self.cols),
+            bucket(a.y.min(b.y) - pad, self.min_y, self.rows),
+            bucket(a.y.max(b.y) + pad, self.min_y, self.rows),
+        ))
+    }
+
+    fn insert(&mut self, chain: u32, segment: u32, a: Point, b: Point) {
+        let Some((c0, c1, r0, r1)) = self.range(a, b, TRUST_RADIUS) else {
+            return;
+        };
+        for row in r0..=r1 {
+            for col in c0..=c1 {
+                self.buckets[row * self.cols + col].push((chain, segment));
+            }
+        }
+    }
+
+    /// Visit every indexed segment whose bucket the segment `a`..`b` touches,
+    /// stopping as soon as `visit` returns `true`. A segment may be visited
+    /// more than once when it spans several buckets; the caller's test is a
+    /// pure predicate, so that costs a little work and changes no answer.
+    fn any_near(&self, a: Point, b: Point, mut visit: impl FnMut(u32, u32) -> bool) -> bool {
+        let Some((c0, c1, r0, r1)) = self.range(a, b, 0.0) else {
             return false;
         };
-        let near = if at_start {
+        for row in r0..=r1 {
+            for col in c0..=c1 {
+                for &(chain, segment) in &self.buckets[row * self.cols + col] {
+                    if visit(chain, segment) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+/// PTE-TOPO-013's local legality gate, over geometry prepared once per pass.
+struct JunctionGuard {
+    /// Each chain's points, or `None` where the chain is not a polyline.
+    polylines: Vec<Option<Vec<Point>>>,
+    /// Whether every chain is a polyline. §10 runs before §11, so this is
+    /// always true in the pipeline; if it ever is not, no junction moves.
+    all_polylines: bool,
+    index: SegmentIndex,
+}
+
+impl JunctionGuard {
+    fn new(topology: &Topology) -> Self {
+        let polylines: Vec<Option<Vec<Point>>> =
+            topology.chains.iter().map(polyline_points).collect();
+        let all_polylines = polylines.iter().all(Option::is_some);
+        let index = if all_polylines {
+            SegmentIndex::build(&polylines)
+        } else {
+            SegmentIndex::empty()
+        };
+        Self {
+            polylines,
+            all_polylines,
+            index,
+        }
+    }
+
+    /// How many boundary segments the index holds, for work accounting.
+    fn indexed_segments(&self) -> u64 {
+        self.polylines
+            .iter()
+            .flatten()
+            .map(|points| points.len().saturating_sub(1) as u64)
+            .sum()
+    }
+
+    /// The point one step in from `chain`'s moving end.
+    fn near(&self, chain: usize, at_start: bool) -> Option<Point> {
+        let points = self.polylines.get(chain)?.as_ref()?;
+        if at_start {
             points.get(1).copied()
         } else {
             points.get(points.len().saturating_sub(2)).copied()
-        };
-        let Some(near) = near else {
-            return false;
-        };
-        if QuantKey::geometry(candidate.distance(near)).map_or(true, |distance| {
-            distance <= QuantKey::geometry(1.0e-6).unwrap_or(distance)
-        }) {
-            return false;
-        }
-        rays.push((near, original_near - anchor, near - candidate));
-    }
-
-    // Every ordered ray pair keeps its orientation. Collinear opposite rays
-    // (the cap of a T junction) additionally have to remain opposite.
-    for i in 0..rays.len() {
-        for j in i + 1..rays.len() {
-            let old_cross = quantized_sign(rays[i].1.cross(rays[j].1));
-            let new_cross = quantized_sign(rays[i].2.cross(rays[j].2));
-            if old_cross != 0 && old_cross != new_cross {
-                return false;
-            }
-            if old_cross == 0
-                && quantized_sign(rays[i].1.dot(rays[j].1)) < 0
-                && quantized_sign(rays[i].2.dot(rays[j].2)) >= 0
-            {
-                return false;
-            }
         }
     }
 
-    // Only the first segment of each incident chain changes. Reject a proper
-    // crossing with every segment that does not touch the old shared vertex
-    // or that first segment's other endpoint.
-    for (near, _, _) in &rays {
-        for chain in &topology.chains {
-            let Some(points) = polyline_points(chain) else {
+    /// Record an accepted move, so a later junction's guard sees the geometry
+    /// that is actually there now.
+    fn moved(&mut self, chain: usize, at_start: bool, position: Point) {
+        let Some(Some(points)) = self.polylines.get_mut(chain) else {
+            return;
+        };
+        if at_start {
+            if let Some(first) = points.first_mut() {
+                *first = position;
+            }
+        } else if let Some(last) = points.last_mut() {
+            *last = position;
+        }
+    }
+
+    fn is_legal(
+        &self,
+        topology: &Topology,
+        vertex: VertexId,
+        candidate: Point,
+        incident: &[(usize, bool, Point)],
+    ) -> bool {
+        if !self.all_polylines {
+            return false;
+        }
+        let anchor = topology.vertices[vertex.index()].position;
+        if !candidate.is_finite()
+            || QuantKey::geometry(anchor.distance(candidate)).map_or(true, |distance| {
+                distance > QuantKey::geometry(TRUST_RADIUS).unwrap_or(distance)
+            })
+        {
+            return false;
+        }
+
+        let mut rays = Vec::with_capacity(incident.len());
+        for &(edge_index, at_start, original_near) in incident {
+            let chain = topology.edges[edge_index].geometry.index();
+            let Some(near) = self.near(chain, at_start) else {
                 return false;
             };
-            for pair in points.windows(2) {
-                if pair[0] == anchor || pair[1] == anchor || pair[0] == *near || pair[1] == *near {
-                    continue;
+            if QuantKey::geometry(candidate.distance(near)).map_or(true, |distance| {
+                distance <= QuantKey::geometry(1.0e-6).unwrap_or(distance)
+            }) {
+                return false;
+            }
+            rays.push((near, original_near - anchor, near - candidate));
+        }
+
+        // Every ordered ray pair keeps its orientation. Collinear opposite rays
+        // (the cap of a T junction) additionally have to remain opposite.
+        for i in 0..rays.len() {
+            for j in i + 1..rays.len() {
+                let old_cross = quantized_sign(rays[i].1.cross(rays[j].1));
+                let new_cross = quantized_sign(rays[i].2.cross(rays[j].2));
+                if old_cross != 0 && old_cross != new_cross {
+                    return false;
                 }
-                if segments_intersect(candidate, *near, pair[0], pair[1]) {
+                if old_cross == 0
+                    && quantized_sign(rays[i].1.dot(rays[j].1)) < 0
+                    && quantized_sign(rays[i].2.dot(rays[j].2)) >= 0
+                {
                     return false;
                 }
             }
         }
+
+        // Only the first segment of each incident chain changes. Reject a
+        // proper crossing with every segment that does not touch the old shared
+        // vertex or that first segment's other endpoint.
+        for &(near, _, _) in &rays {
+            let crossed = self.index.any_near(candidate, near, |chain, segment| {
+                let Some(Some(points)) = self.polylines.get(chain as usize) else {
+                    return false;
+                };
+                let (Some(&from), Some(&to)) = (
+                    points.get(segment as usize),
+                    points.get(segment as usize + 1),
+                ) else {
+                    return false;
+                };
+                if from == anchor || to == anchor || from == near || to == near {
+                    return false;
+                }
+                segments_intersect(candidate, near, from, to)
+            });
+            if crossed {
+                return false;
+            }
+        }
+        true
     }
-    true
 }
 
 fn set_chain_endpoint(chain: &mut CurveChain, at_start: bool, position: Point) -> bool {
@@ -633,40 +867,108 @@ fn set_chain_endpoint(chain: &mut CurveChain, at_start: bool, position: Point) -
     }
 }
 
+/// Weighted least-squares intersection of the incident coverage lines (§10.4).
+///
+/// Returns the shared point and the total weight behind it, or `None` when the
+/// evidence does not locate a point.
+///
+/// Two refusals live here. Fewer than two lines is not an intersection at all.
+/// And because the normals are unit, `xx + yy` is exactly the total weight and
+/// the determinant is `Σ_{i<j} w_i w_j sin²θ_ij` -- so an *absolute* threshold
+/// on the determinant tests confidence magnitude as much as geometry, and two
+/// barely trusted nearly parallel lines pass it. What comes back then is
+/// located only by the trust radius, which is a whole pixel: further from the
+/// truth than the grid corner it replaces. Dividing by the squared total weight
+/// makes the gate scale-free, so it asks whether these lines actually cross at
+/// an angle (`nearly_parallel_junction_evidence_is_refused`).
+fn solve_junction(lines: &[JunctionLine], mixture_confidence: f64) -> Option<(Point, f64)> {
+    if lines.len() < 2 {
+        return None;
+    }
+    let mut xx = 0.0;
+    let mut xy = 0.0;
+    let mut yy = 0.0;
+    let mut xt = 0.0;
+    let mut yt = 0.0;
+    let mut line_confidence = 0.0;
+    for line in lines {
+        let weight = line.confidence * mixture_confidence;
+        xx += weight * line.nx * line.nx;
+        xy += weight * line.nx * line.ny;
+        yy += weight * line.ny * line.ny;
+        xt += weight * line.nx * line.target;
+        yt += weight * line.ny * line.target;
+        line_confidence += weight;
+    }
+    let determinant = xx.mul_add(yy, -xy * xy);
+    let spread = MIN_JUNCTION_CONDITIONING * line_confidence * line_confidence;
+    if QuantKey::cost_or_worst(determinant.abs()) <= QuantKey::cost_or_worst(spread) {
+        return None;
+    }
+    let candidate = Point::new(
+        (xt.mul_add(yy, -xy * yt)) / determinant,
+        (xx.mul_add(yt, -xy * xt)) / determinant,
+    );
+    if candidate.is_finite() {
+        Some((candidate, line_confidence))
+    } else {
+        None
+    }
+}
+
 /// Solve every multi-colour junction once and propagate the exact coordinate
 /// to every incident shared chain (PTE-TOPO-011/012/013, PTE-AA-006).
+#[allow(clippy::too_many_arguments)]
 fn optimize_junctions(
     topology: &mut Topology,
     image: &ImageView<'_>,
     face_colors: &[PremulLinearRgba],
     endpoint_evidence: &[EndpointLines],
     options: &ReconstructOptions,
+    budget: &WorkBudget,
     control: &dyn TraceControl,
     stats: &mut ReconstructionStats,
 ) -> Result<(), TraceError> {
-    for vertex_index in 0..topology.vertices.len() {
+    // One sweep of the edge list builds every vertex's incidence, rather than
+    // rescanning the whole list per vertex.
+    //
+    // Both ends are recorded, so an edge whose two ends are the *same* vertex
+    // -- the boundary of a region that meets everything else at a single
+    // corner -- appears twice, once per end. Recording it once left its other
+    // end behind on the grid when the junction moved: the closed chain came
+    // apart, and the validator that reruns after §10 failed the whole trace
+    // (`a_loop_edge_at_a_junction_stays_closed`). The count now also matches
+    // the vertex degree, because degree counts half-edges and a loop
+    // contributes two.
+    let mut incidence: Vec<Vec<(usize, bool)>> = vec![Vec::new(); topology.vertices.len()];
+    for (edge_index, edge) in topology.edges.iter().enumerate() {
+        if let Some(slot) = incidence.get_mut(edge.start.index()) {
+            slot.push((edge_index, true));
+        }
+        if let Some(slot) = incidence.get_mut(edge.end.index()) {
+            slot.push((edge_index, false));
+        }
+    }
+    let mut guard = JunctionGuard::new(topology);
+    budget.charge(cost::BOUNDARY_SEGMENT * guard.indexed_segments())?;
+
+    for (vertex_index, incident) in incidence.iter().enumerate() {
         check_cancel(control, topology.edges.len() + vertex_index)?;
         if topology.vertices[vertex_index].degree < 3 {
             continue;
         }
+        budget.charge(cost::COVERAGE_SAMPLE)?;
         let vertex = VertexId(vertex_index as u32);
-        let incident: Vec<(usize, bool)> = topology
-            .edges
-            .iter()
-            .enumerate()
-            .filter_map(|(edge_index, edge)| {
-                if edge.start == vertex {
-                    Some((edge_index, true))
-                } else if edge.end == vertex {
-                    Some((edge_index, false))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        // A vertex whose incidence does not account for its degree is not one
+        // this pass understands, and guessing at a shared position from partial
+        // incidence is exactly what PTE-TOPO-011 forbids. Leave it on the grid.
+        if incident.len() != topology.vertices[vertex_index].degree as usize {
+            stats.low_confidence_junctions += 1;
+            continue;
+        }
 
         let mut faces = BTreeSet::new();
-        for &(edge_index, _) in &incident {
+        for &(edge_index, _) in incident {
             let edge = &topology.edges[edge_index];
             if !edge.left_face.is_exterior() {
                 faces.insert(edge.left_face);
@@ -701,41 +1003,16 @@ fn optimize_junctions(
             .iter()
             .map(|&(_, _, endpoint)| endpoint.line)
             .collect();
-        if lines.len() < 2 {
+        let Some((candidate, line_confidence)) = solve_junction(&lines, mixture_confidence) else {
             stats.low_confidence_junctions += 1;
             continue;
-        }
-
-        let mut xx = 0.0;
-        let mut xy = 0.0;
-        let mut yy = 0.0;
-        let mut xt = 0.0;
-        let mut yt = 0.0;
-        let mut line_confidence = 0.0;
-        for line in &lines {
-            let weight = line.confidence * mixture_confidence;
-            xx += weight * line.nx * line.nx;
-            xy += weight * line.nx * line.ny;
-            yy += weight * line.ny * line.ny;
-            xt += weight * line.nx * line.target;
-            yt += weight * line.ny * line.target;
-            line_confidence += weight;
-        }
-        let determinant = xx.mul_add(yy, -xy * xy);
-        if QuantKey::cost_or_worst(determinant.abs()) <= QuantKey::cost_or_worst(1.0e-6) {
-            stats.low_confidence_junctions += 1;
-            continue;
-        }
-        let candidate = Point::new(
-            (xt.mul_add(yy, -xy * yt)) / determinant,
-            (xx.mul_add(yt, -xy * xt)) / determinant,
-        );
+        };
         let legal_incident: Vec<_> = endpoints
             .iter()
             .map(|&(edge_index, at_start, endpoint)| (edge_index, at_start, endpoint.original_near))
             .collect();
         if legal_incident.len() != incident.len()
-            || !legal_junction_move(topology, vertex, candidate, &legal_incident)
+            || !guard.is_legal(topology, vertex, candidate, &legal_incident)
         {
             stats.low_confidence_junctions += 1;
             continue;
@@ -743,9 +1020,10 @@ fn optimize_junctions(
 
         topology.vertices[vertex_index].position = candidate;
         let confidence = (line_confidence / lines.len() as f64).clamp(0.0, 1.0);
-        for &(edge_index, at_start) in &incident {
+        for &(edge_index, at_start) in incident {
             let chain_id = topology.edges[edge_index].geometry;
             if set_chain_endpoint(&mut topology.chains[chain_id.index()], at_start, candidate) {
+                guard.moved(chain_id.index(), at_start, candidate);
                 topology.edges[edge_index].confidence.evidence =
                     BoundaryEvidence::CoverageReconstructed;
                 topology.edges[edge_index].confidence.value =
@@ -765,12 +1043,17 @@ fn optimize_junctions(
 ///
 /// # Errors
 ///
-/// [`TraceError::Cancelled`] if the caller cancels.
+/// [`TraceError::Cancelled`] if the caller cancels, or
+/// [`TraceError::ResourceLimit`] if `budget` runs out. §10 charges what it
+/// looks at -- one [`cost::COVERAGE_SAMPLE`] per boundary sample inverted and
+/// per junction probed -- so a caller's work budget bounds this stage as it
+/// bounds every other one (PTE-SEC-007).
 pub fn reconstruct(
     topology: &mut Topology,
     image: &ImageView<'_>,
     face_colors: &[PremulLinearRgba],
     options: &ReconstructOptions,
+    budget: &WorkBudget,
     control: &dyn TraceControl,
 ) -> Result<ReconstructionStats, TraceError> {
     let mut stats = ReconstructionStats::default();
@@ -805,6 +1088,7 @@ pub fn reconstruct(
             stats.crisp_edges += 1;
             continue;
         }
+        budget.charge(cost::COVERAGE_SAMPLE * points.len() as u64)?;
 
         let estimated = normals(&points);
         let evidence: Vec<Evidence> = points
@@ -890,13 +1174,19 @@ pub fn reconstruct(
         face_colors,
         &endpoint_evidence,
         options,
+        budget,
         control,
         &mut stats,
     )?;
 
-    // A reconstructed junction can upgrade an otherwise crisp incident edge.
     // Recount from the final IR so these public numbers cannot disagree with
-    // the report's `boundary_sources` census.
+    // the report's `boundary_sources` census, which counts the same field.
+    //
+    // The junction pass cannot reclassify an edge on its own: an edge with no
+    // coverage constraint stores no endpoint evidence, and a junction missing
+    // any incident edge's evidence is refused outright. So this restates the
+    // inline counts rather than correcting them -- it is a guard against the
+    // two counts drifting apart, not a second classification pass.
     stats.reconstructed_edges = 0;
     stats.low_confidence_edges = 0;
     stats.crisp_edges = 0;
@@ -1167,6 +1457,7 @@ mod tests {
             &image,
             &colors,
             &ReconstructOptions::default(),
+            &WorkBudget::unbounded(),
             &NoControl,
         )
         .unwrap();
@@ -1204,6 +1495,7 @@ mod tests {
             &image,
             &colors,
             &ReconstructOptions::default(),
+            &WorkBudget::unbounded(),
             &NoControl,
         )
         .unwrap();
@@ -1215,6 +1507,66 @@ mod tests {
         assert_eq!(topology.chains[1].start, moved);
         assert_eq!(topology.chains[2].end(), moved);
         assert_eq!(topology.chains[3].start, moved);
+    }
+
+    /// A line through `point` whose normal is at `degrees` from the x axis.
+    fn line_through(point: Point, degrees: f64, confidence: f64) -> JunctionLine {
+        let (nx, ny) = degrees.to_radians().sin_cos();
+        JunctionLine {
+            nx: ny,
+            ny: nx,
+            target: ny.mul_add(point.x, nx * point.y),
+            confidence,
+        }
+    }
+
+    /// §10.4: two lines that cross at a real angle locate their intersection,
+    /// and the weight behind it is reported for the caller's confidence.
+    #[test]
+    fn crossing_junction_evidence_locates_the_intersection() {
+        let truth = Point::new(10.35, 10.62);
+        let lines = [
+            line_through(truth, 0.0, 0.8),
+            line_through(truth, 90.0, 0.6),
+        ];
+        // Perpendicular lines cross.
+        let (solved, weight) = solve_junction(&lines, 1.0).unwrap();
+        assert!(solved.distance(truth) < 1.0e-9, "{solved:?}");
+        assert!((weight - 1.4).abs() < 1.0e-9, "{weight}");
+    }
+
+    /// PTE-AA-005 and PTE-AA-007: nearly parallel evidence does not locate a
+    /// junction, and low confidence must not be able to buy its way past the
+    /// gate. An absolute determinant threshold let two weak, nearly parallel
+    /// lines through, and the "solution" was then bounded only by the one-pixel
+    /// trust radius -- worse than the grid corner it would have replaced.
+    #[test]
+    fn nearly_parallel_junction_evidence_is_refused() {
+        let truth = Point::new(10.35, 10.62);
+        for confidence in [1.0, 0.2, 0.02] {
+            let lines = [
+                line_through(truth, 0.0, confidence),
+                line_through(truth, 4.0, confidence),
+            ];
+            assert!(
+                solve_junction(&lines, 1.0).is_none(),
+                "4 degrees apart at confidence {confidence} must not locate a junction"
+            );
+        }
+        // The gate is on geometry, so the same weak lines at a real angle do
+        // still solve: it is not simply refusing everything faint.
+        let lines = [
+            line_through(truth, 0.0, 0.02),
+            line_through(truth, 40.0, 0.02),
+        ];
+        assert!(solve_junction(&lines, 1.0).is_some());
+    }
+
+    /// One line is not an intersection.
+    #[test]
+    fn a_single_incident_line_locates_nothing() {
+        let lines = [line_through(Point::new(3.0, 4.0), 15.0, 1.0)];
+        assert!(solve_junction(&lines, 1.0).is_none());
     }
 
     /// PTE-TOPO-013: a candidate that crosses an unrelated segment is not a
@@ -1230,7 +1582,7 @@ mod tests {
             (1, true, Point::new(11.0, 11.0)),
             (2, true, Point::new(10.0, 12.0)),
         ];
-        assert!(!legal_junction_move(
+        assert!(!JunctionGuard::new(&topology).is_legal(
             &topology,
             VertexId(0),
             Point::new(10.4, 10.8),
@@ -1248,7 +1600,7 @@ mod tests {
             (1, true, Point::new(11.0, 11.0)),
             (2, true, Point::new(10.0, 12.0)),
         ];
-        assert!(!legal_junction_move(
+        assert!(!JunctionGuard::new(&topology).is_legal(
             &topology,
             VertexId(0),
             Point::new(10.7, 11.7),
