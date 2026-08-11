@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 
 .PHONY: test test-unit test-conformance conformance phase0 verify-env install-dev web \
-	engine-test engine-lint engine-wasm engine-deny engine-trace
+	engine-test engine-lint engine-wasm engine-deny engine-trace engine-evaluation-corpus
 
 test:
 	$(PYTHON) -m pytest
@@ -33,7 +33,7 @@ verify-env:
 install-dev:
 	$(PYTHON) -m pip install -e ".[backends,test]"
 
-# --- Palette Tracer Engine (engine/, Rust, MIT OR Apache-2.0) -------------
+# --- Palette Tracer Engine (engine/, Rust, MIT) ----------------------------
 # engine/SPEC.md is authoritative for these; engine/AGENTS.md has the rules.
 
 engine-test:
@@ -72,6 +72,13 @@ engine-corpus: engine-fixtures
 	cd engine && cargo build --release -p palette-tracer-cli
 	@python3 engine/tools/corpus_report.py $(ENGINE_FIXTURES) \
 		engine/target/release/pte
+
+# PTE-TEST-003/PTE-NO-048: licensed clean-room evaluation inputs with fixed
+# train/development/holdout splits. This does not alter the strict synthetic
+# conformance corpus or calibrate any threshold.
+engine-evaluation-corpus:
+	python3 engine/tools/validate_evaluation_corpus.py
+	python3 -m unittest engine/tools/test_evaluation_corpus.py
 
 # End-to-end on the repository's own sample. `pte` reads Netpbm, not PNG:
 # the core takes decoded pixels (PTE-ARCH-001) and no codec adapter is built.

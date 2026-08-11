@@ -3,8 +3,9 @@
 `engine/SPEC.md` is authoritative. This document records evidence; it does not
 redefine requirements.
 
-**Assessed at:** 2026-08-11, after the §11.7 circle-recognition QA fixes.
-**Measured with:** `cargo test --workspace` → **423 tests and 2 doctests passed**;
+**Assessed at:** 2026-08-11, after the clean-room evaluation-corpus slice.
+**Rust evidence inherited from current `master`'s §11.7 QA:**
+`cargo test --workspace` → **423 tests and 2 doctests passed**;
 `cargo clippy --workspace --all-targets -- -D warnings` → clean;
 `cargo fmt --check` → clean;
 `cargo check --workspace --target wasm32-unknown-unknown` → clean;
@@ -12,6 +13,15 @@ redefine requirements.
 environment and no dependency changed;
 `make engine-parity` → **13 fixtures, native and wasm32 agree**.
 Toolchain `rustc 1.97.1` on `x86_64-unknown-linux-gnu`.
+
+**Corpus evidence in this slice:**
+`python3 engine/tools/validate_evaluation_corpus.py` → **18 valid inputs,
+6 train / 6 development / 6 holdout; 13 analytic inputs regenerate
+byte-identically and 5 generated inputs match fixed digests**;
+`python3 -m unittest engine/tools/test_evaluation_corpus.py` → **4 passed**,
+including negative controls. Rust was not rerun in this environment because
+`cargo`, `rustc`, and `cargo-deny` are absent; this slice changes no Rust code,
+Cargo manifest, dependency, strict synthetic fixture, or tracing threshold.
 
 ## Status vocabulary
 
@@ -92,7 +102,7 @@ segments.
 
 | Phase | Status | Evidence | Remaining |
 |---|---|---|---|
-| Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 13-fixture synthetic corpus with manifests (`tools/make_fixtures.py`); `cargo deny` wired to `make engine-deny` | No **real-world** corpus; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
+| Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 13-fixture strict synthetic corpus (`tools/make_fixtures.py`) plus an 18-input licensed clean-room evaluation corpus with fixed train/development/holdout splits (`fixtures/manifests/evaluation-corpus-v1.json`); `cargo deny` wired to `make engine-deny` | The five naturalistic inputs are generated rather than captured real-world photographs; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
 | Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 70 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
 | Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 28 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
 | Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 30 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`, junction topology in `crates/palette-tracer/tests/junction_topology.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners and DP segmentation, plus complete-circle recognition: `palette-tracer-geometry`, 55 tests, `docs/notes/curve-fitting.md`, `docs/notes/primitive-recognition.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; non-circular §11.7 primitives |
@@ -170,7 +180,7 @@ the order the remaining ones should be taken in.
 | PTE-DET-001..004 | conforming | Quantised keys, stable heaps, no unordered iteration in an output path | `determinism.rs`, 8 tests, plus `make engine-parity`: the same engine compiled for `wasm32-wasip1` and run under Node's V8 produces byte-identical semantic digests on all 13 fixtures. Browser-engine parity beyond V8 is still unproven |
 | PTE-LIC-001..005 | conforming | MIT-only engine: ADR-0004; clean-room and one-way dependency boundary: ADR-0003; `deny.toml`, `THIRD_PARTY_NOTICES.md` | `make engine-deny` → `advisories ok, bans ok, licenses ok, sources ok`. `cargo metadata` reports the workspace packages as MIT |
 | PTE-NO-042 | conforming | Unimplemented settings are refused by name; implemented settings reach a decision path | `unimplemented_modifiers_are_refused`, `an_unimplemented_profile_is_refused_not_downgraded`, `disabling_thin_feature_protection_changes_the_merge_decision` |
-| PTE-TEST-003/004 | partly | 13 synthetic fixtures regenerated from analytic descriptions, with §25.2 manifests: `tools/make_fixtures.py`, `make engine-fixtures` | Synthetic only. No real-world corpus, and no multiple-resolution or rotation sweep yet |
+| PTE-TEST-003/004 | partly | 13 strict synthetic fixtures regenerated from analytic descriptions (`tools/make_fixtures.py`, `make engine-fixtures`); 18 clean-room evaluation inputs under MIT, with complete provenance/digests and fixed 6/6/6 splits (`fixtures/manifests/evaluation-corpus-v1.json`). Thirteen evaluation inputs regenerate byte-identically; five naturalistic inputs are fixed generated assets and are explicitly not metric truth | `make engine-evaluation-corpus` validates all 18 and runs four tests including negative controls. No multiple-resolution or rotation sweep yet; naturalistic coverage is generated rather than captured photography |
 
 ---
 
