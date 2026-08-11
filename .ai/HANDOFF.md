@@ -1,11 +1,16 @@
 # Handoff
 
 **Session date:** 2026-08-11
-**Branch:** `agent/fix-cli-config-thin-features`, from merged PR #19's `master`
-**Working slice:** fixed the two configuration defects recorded by the prior
-session: CLI flags now override config files regardless of token order, and
-`segmentation.protectThinFeatures` now controls the merge penalty. No Python
-implementation source was read or changed.
+**Branch:** `agent/optimize-subpixel-junctions`, from merged PR #20's `master`
+**Working slice:** implemented PR B: §10.4 multi-colour evidence now drives one
+shared subpixel solve per eligible junction, with PTE-TOPO-013 trust, cyclic
+order and non-incident crossing guards. All incident chains receive the exact
+same point. Added the analytic `topology/subpixel-t-junction` corpus fixture and
+`docs/notes/junction-optimization.md`. No Python application source was read or
+changed; only the engine's first-party fixture generator was edited.
+
+The previous configuration slice remains described below because its decisions
+are still relevant context.
 
 ## Configuration correctness
 
@@ -100,7 +105,7 @@ for 4-connected blobs.
 
 ## What changed
 
-**§10 exists.** New crate `palette-tracer-aa`, 23 tests, wired as stage E.5
+**§10 exists.** New crate `palette-tracer-aa`, 27 tests, wired as stage E.5
 between topology extraction and §11 fitting:
 
 * **§10.2** — `two_color_best` estimates the compositing transfer from the
@@ -143,22 +148,35 @@ rounded-rectangle        14    184      4   2181   ->       2     12      8    6
 star-acute-corners       47    556     12   6160   ->       2     20     20   1104
 ```
 
-Every other fixture is byte-identical, including `pixel-art/diagonals` and
-`topology/one-pixel-bridge`.
+Every previously existing fixture is byte-identical, including
+`pixel-art/diagonals` and `topology/one-pixel-bridge`; PR B adds the thirteenth
+fixture `topology/subpixel-t-junction`.
 
 ## Commands run, and what they actually returned
 
 ```
-cd engine && cargo test --workspace          400 passed, 0 failed
+cd engine && cargo test --workspace          404 passed, 0 failed
 cd engine && cargo clippy --workspace --all-targets -- -D warnings   clean
 cd engine && cargo fmt --check                                       clean
 cd engine && cargo check --workspace --target wasm32-unknown-unknown clean
 make engine-deny        advisories ok, bans ok, licenses ok, sources ok
-make engine-parity      12 fixture(s), native and wasm32 agree
+make engine-parity      13 fixture(s), native and wasm32 agree
 make engine-corpus      the census above
 ```
 
-For this configuration slice specifically:
+For PR B specifically, the combined gate command returned:
+
+```
+make engine-test        404 passed, 0 failed
+make engine-lint        fmt clean; Clippy clean with -D warnings
+make engine-wasm        workspace check clean for wasm32-unknown-linux-gnu
+make engine-deny        advisories ok, bans ok, licenses ok, sources ok
+make engine-corpus      13 fixtures; T junction is 3 faces / 6 edges / no fallback
+make engine-parity      13 fixtures; native and wasm32-wasip1 agree
+git diff --check        clean
+```
+
+For the previous configuration slice specifically:
 
 ```
 cargo test -p palette-tracer-cli --test cli
@@ -235,18 +253,15 @@ The Python suite was not re-run; nothing under `palette_trace/`, `tests/` or
 
 ## What to build next
 
-**§10.4's weights have nothing to consume them.** Junction positions are
-PTE-TOPO-011/012/013 and are not implemented, so §10 pins every chain endpoint.
-This remains §10's largest gap and the natural next slice — and unlike this
-session's starting point, the barycentric estimator it needs already exists and
-is tested. The analytic circles have no junctions and therefore cannot validate
-that requirement; their final 2/2 face count removes the former misleading
-attribution.
+**§11.7 primitive recognition is now the natural next geometry slice.** A
+circle is still emitted as cubics rather than represented semantically as a
+circle, and PTE-GEO-010/011 remains unimplemented. That slice needs an IR model,
+recognition gates and serialization that preserves the semantic primitive.
 
-After that, §11.7 primitives (a circle is still cubics, not a circle) would
-make `curves/circle-subpixel-*` say what they are, and PTE-GEO-011's "recognized
-primitives MUST remain represented semantically in the IR" would have something
-to represent.
+The closest §10 follow-up is evidence pooling: the two-colour compositing
+transfer is still selected per pixel, and the multi-colour junction model is
+linear-light only. These are declared limitations, not blockers for the shared
+junction implementation.
 
 ## Unverified assumptions
 

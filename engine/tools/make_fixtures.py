@@ -90,6 +90,40 @@ def supersampled(inside, a, b):
     return shade
 
 
+def linear_supersampled_regions(classify, colors):
+    """Supersample a multi-colour partition and composite in linear light."""
+
+    def decode(value):
+        encoded = value / 255.0
+        if encoded <= 0.04045:
+            return encoded / 12.92
+        return ((encoded + 0.055) / 1.055) ** 2.4
+
+    def encode(value):
+        if value <= 0.0031308:
+            encoded = 12.92 * value
+        else:
+            encoded = 1.055 * value ** (1.0 / 2.4) - 0.055
+        return round(min(1.0, max(0.0, encoded)) * 255.0)
+
+    linear = [tuple(decode(channel) for channel in color) for color in colors]
+
+    def shade(px, py):
+        sums = [0.0, 0.0, 0.0]
+        step = 1.0 / SUPERSAMPLE
+        for j in range(SUPERSAMPLE):
+            for i in range(SUPERSAMPLE):
+                sx = px - 0.5 + (i + 0.5) * step
+                sy = py - 0.5 + (j + 0.5) * step
+                color = linear[classify(sx, sy)]
+                for channel in range(3):
+                    sums[channel] += color[channel]
+        scale = 1.0 / (SUPERSAMPLE * SUPERSAMPLE)
+        return tuple(encode(total * scale) for total in sums) + (255,)
+
+    return shade
+
+
 def hard(inside, a, b):
     """No antialiasing at all: the pixel centre decides. (§10.6, §15.)"""
 
@@ -208,6 +242,33 @@ def fixtures() -> list[Fixture]:
             truth="exact",
             antialias="none",
             notes="PTE-SEG-017 thin-feature protection: this is the fixture it exists for.",
+        )
+    )
+
+    junction_x, junction_y = 7.35, 7.62
+
+    def t_junction_region(x, y):
+        if y < junction_y:
+            return 0
+        return 1 if x < junction_x else 2
+
+    out.append(
+        Fixture(
+            id="topology/subpixel-t-junction",
+            family="topology",
+            width=16,
+            height=16,
+            shade=linear_supersampled_regions(t_junction_region, [INK, RED, GREEN]),
+            intended_profiles=["flat-illustration", "logo"],
+            known_features="three antialiased regions meeting at one subpixel T junction",
+            protected_topology="3 faces; exactly 1 degree-3 interior junction; incident order preserved",
+            truth=f"exact: shared junction ({junction_x}, {junction_y})",
+            antialias="16x16 box supersampling in linear light",
+            parameters={"junction": [junction_x, junction_y]},
+            notes=(
+                "PTE-AA-006 and PTE-TOPO-011/012/013: barycentric evidence gates "
+                "one shared junction solve; all three incident chains must reuse its coordinate."
+            ),
         )
     )
 

@@ -39,13 +39,13 @@
 //!
 //! # What it does not
 //!
-//! Junction positions are not optimised (PTE-TOPO-011/012/013), so §10.4's
-//! barycentric weights are computed and not yet consumed. Arcs (§11.4),
+//! Multi-colour junctions are optimised once as shared vertices, using §10.4's
+//! barycentric evidence and PTE-TOPO-013's legality guards. Arcs (§11.4),
 //! primitive recognition (§11.7), strokes (§13), gradients (§14) and
-//! fabrication (§16) are **not** implemented, and anything that would need them
-//! is refused by name at configuration time rather than silently approximated
-//! (PTE-NO-042). `docs/IMPLEMENTATION_STATUS.md` is the authority on what is
-//! and is not built.
+//! fabrication (§16) are **not** implemented, and anything that would need
+//! them is refused by name at configuration time rather than silently
+//! approximated (PTE-NO-042). `docs/IMPLEMENTATION_STATUS.md` is the authority
+//! on what is and is not built.
 
 use palette_tracer_color::{Palette, PaletteEntry};
 use palette_tracer_core::config::{
@@ -93,8 +93,6 @@ pub struct Capabilities {
 /// Reported under `unimplemented` on every trace, so a caller learns what the
 /// engine did *not* do rather than inferring it from silence (§0.2).
 pub const UNIMPLEMENTED: &[&str] = &[
-    "PTE-AA-006 for junctions (§10.4 barycentric weights are computed but \
-     junction positions are PTE-TOPO-011/012/013, which is not implemented)",
     "PTE-GEO-010/011 (§11.7 primitive recognition)",
     "the §11.4 circular arc model; lines and cubics only",
     "PTE-GEO-015..021 (§12 logo and lettering regularization)",
@@ -371,6 +369,21 @@ impl Engine {
             name: "coverage_unconstrained_samples",
             value: u64::from(reconstruction.unconstrained_samples),
         });
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Topology,
+            name: "coverage_reconstructed_junctions",
+            value: u64::from(reconstruction.reconstructed_junctions),
+        });
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Topology,
+            name: "coverage_low_confidence_junctions",
+            value: u64::from(reconstruction.low_confidence_junctions),
+        });
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Topology,
+            name: "coverage_crisp_junctions",
+            value: u64::from(reconstruction.crisp_junctions),
+        });
 
         // Stage F (§5.3): fit the shared chains. This replaces geometry and
         // nothing else -- vertices, half-edges, faces and cycles are untouched,
@@ -523,9 +536,9 @@ impl Engine {
             evidence: if config.profile == Profile::PixelArt {
                 palette_tracer_core::ir::BoundaryEvidence::PixelArtPolicy
             } else {
-                // PTE-AA-009: boundaries are on the pixel-cell interface,
-                // because §10 coverage reconstruction is not implemented. The
-                // report says `crisp_grid` because that is what happened.
+                // Extraction starts on the pixel-cell interface. §10 later
+                // upgrades individual edges and junctions when the raster
+                // supplies usable coverage evidence (PTE-AA-009).
                 palette_tracer_core::ir::BoundaryEvidence::CrispGrid
             },
         };
@@ -660,16 +673,14 @@ impl Engine {
                 .about("PTE-COLOR-012"),
             );
         }
-        // §0.2: the caller is told what did *not* happen. §11 fitting now
-        // makes the geometry compact; it does not make it subpixel-accurate,
-        // and a reader who saw only "cubics" could reasonably assume it did.
-        // The boundary *evidence* is still the pixel-cell interface.
+        // §0.2: a trace with no usable coverage evidence says so explicitly.
+        // This is an input outcome, not a missing implementation: §10 ran and
+        // retained the honest crisp estimate (§10.6).
         warnings.push(
             Warning::info(
                 "geometry.evidence_is_the_pixel_grid",
-                "boundary positions come from pixel-cell interfaces: curve \
-                 fitting (§11) is applied, subpixel coverage reconstruction \
-                 (§10) is not implemented in this build"
+                "some boundary positions may remain on pixel-cell interfaces \
+                 where §10 found no usable subpixel coverage evidence"
                     .to_owned(),
             )
             .about("PTE-AA-009"),

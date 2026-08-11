@@ -453,8 +453,16 @@ fn the_report_names_what_is_not_implemented() {
             .report
             .unimplemented
             .iter()
-            .any(|r| r.contains("§10")),
-        "subpixel reconstruction must be named as absent"
+            .any(|r| r.contains("§11.7")),
+        "primitive recognition must be named as absent"
+    );
+    assert!(
+        output
+            .report
+            .unimplemented
+            .iter()
+            .all(|r| !r.contains("PTE-AA-006") && !r.contains("PTE-TOPO-011")),
+        "implemented shared-junction reconstruction must not be named as absent"
     );
     assert!(
         output
@@ -462,9 +470,8 @@ fn the_report_names_what_is_not_implemented() {
             .warnings
             .iter()
             .any(|w| w.code == "geometry.evidence_is_the_pixel_grid"),
-        "that boundary *evidence* is still the pixel grid must be stated, not \
-         implied: §11 fitting makes the geometry compact without making it \
-         subpixel-accurate"
+        "this hard-edged fixture must state that its boundary evidence remains \
+         the pixel grid"
     );
     // PTE-AA-009: the boundary source census reflects what actually happened.
     assert_eq!(output.report.boundary_sources.coverage_reconstructed, 0);
