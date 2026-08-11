@@ -190,9 +190,16 @@ fn recognition_reduces_complexity(topology: &Topology, recognition: &PrimitiveRe
     let Some(chain) = topology.chains.get(edge.geometry.index()) else {
         return false;
     };
-    // One primitive must replace enough generic structure to be a material
-    // description-complexity reduction (PTE-GEO-010).
-    if chain.segments.len() < 4 {
+    // PTE-GEO-010 asks for a material description-complexity reduction, which
+    // is a question about how much description is emitted, not how many
+    // segments carry it. Counting segments made recognition *non-monotonic*: a
+    // looser tolerance lets the fitter compress a circle to three cubics, and
+    // a three-segment chain then failed a `< 4` test -- so widening the
+    // tolerance turned a semantic circle back into curves. Three cubics is
+    // twenty coordinates against a circle's three; counting coordinates says
+    // that plainly and cannot invert.
+    let generic_coordinates = 2 * chain.control_point_count();
+    if generic_coordinates < 2 * primitive_coordinates(&recognition.geometry) {
         return false;
     }
     if edge.left_face != recognition.face && edge.right_face != recognition.face {
@@ -200,6 +207,14 @@ fn recognition_reduces_complexity(topology: &Topology, recognition: &PrimitiveRe
     }
 
     true
+}
+
+/// Coordinates a primitive costs to serialise.
+const fn primitive_coordinates(geometry: &PrimitiveGeometry) -> u32 {
+    match geometry {
+        // `cx`, `cy`, `r`.
+        PrimitiveGeometry::Circle { .. } => 3,
+    }
 }
 
 fn lower_primitive(paint: &Paint, recognition: &PrimitiveRecognition) -> Primitive {

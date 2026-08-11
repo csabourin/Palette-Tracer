@@ -286,7 +286,11 @@ def fixtures() -> list[Fixture]:
                     INK,
                     PAPER,
                 ),
-                intended_profiles=["flat-illustration", "logo"],
+                intended_profiles=(
+                    ["logo", "flat-illustration"]
+                    if index == 0
+                    else ["flat-illustration", "logo"]
+                ),
                 known_features="antialiased circle at a subpixel centre",
                 protected_topology="1 face plus background; no holes",
                 truth=f"exact: centre ({cx}, {cy}), radius 28.0",

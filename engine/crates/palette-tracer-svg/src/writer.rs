@@ -31,7 +31,8 @@
 use palette_tracer_core::config::{BoundarySource, EffectiveConfig, Precision, Profile};
 use palette_tracer_core::error::ValidationError;
 use palette_tracer_core::ir::{
-    CurveChain, Element, FillRule, Paint, PathSegment, Point, Primitive, VectorDocument,
+    CurveChain, Element, FillRule, Layer, Paint, PathSegment, Point, Primitive, Vec2,
+    VectorDocument,
 };
 
 /// Largest precision the search will consider.
@@ -163,6 +164,16 @@ fn precision_is_safe(document: &VectorDocument, decimals: u8, budget: f64) -> bo
         };
         visit(chain.start);
         for segment in &chain.segments {
+            // An arc's radii are geometry too: rounding them changes the drawn
+            // curve exactly as moving an endpoint does, and a recognised
+            // circle's neighbour is described entirely by them.
+            if let PathSegment::Arc { radii, .. } = segment {
+                for value in [radii.x, radii.y] {
+                    if (round_to(value, decimals) - value).abs() > budget {
+                        safe.set(false);
+                    }
+                }
+            }
             visit(segment.end());
         }
     };
@@ -206,6 +217,117 @@ fn precision_is_safe(document: &VectorDocument, decimals: u8, budget: f64) -> bo
         _ => {}
     });
     safe.get()
+}
+
+/// Whether any element is a recognised circle, so the snap below can be
+/// skipped -- and the document left uncloned -- on the ordinary path.
+fn document_has_circle(document: &VectorDocument) -> bool {
+    let mut found = false;
+    document.for_each_element(|element| {
+        if matches!(element, Element::Primitive(Primitive::Circle { .. })) {
+            found = true;
+        }
+    });
+    found
+}
+
+/// Put every recognised circle and the arcs that retrace it on one grid.
+///
+/// §11.7 gives the two faces of a shared circular boundary different SVG
+/// element types: the recognised face is a `<circle>`, its opaque neighbour a
+/// path of two arcs through the same analytic circle. Rounding them
+/// independently at write time pulls them apart. Two ways, both measured:
+/// `cx` rounds to one value while the arc endpoints `cx ± r` round to a pair
+/// whose midpoint is another, and -- because the two arcs are exact
+/// semicircles, so their chord *is* the diameter -- the rounded chord exceeds
+/// twice the rounded radius about a quarter of the time, at which point SVG
+/// 1.1 F.6.6.2 obliges the renderer to scale the radii up and draw a circle
+/// that is not the one beside it.
+///
+/// Snapping the circle first and deriving the arcs from the snapped numbers
+/// removes both: `cx' ± r'` are exact multiples of the grid, so writing them
+/// is the identity and the chord is exactly `2r'` (PTE-TOPO-001, PTE-SVG-009).
+// The equality tests below are identity, not measurement: the arc's numbers
+// are a bit-for-bit copy of the circle's, made by `lower`'s `circle_boundary`
+// from one `PrimitiveRecognition`. A margin would match a *different* circle of
+// nearly the same radius and snap it to the wrong grid point.
+#[allow(clippy::float_cmp)]
+fn snap_circles_to_grid(document: &mut VectorDocument, decimals: u8) {
+    let mut snapped: Vec<(Point, f64, Point, f64)> = Vec::new();
+    visit_elements_mut(&mut document.layers, &mut |element| {
+        if let Element::Primitive(Primitive::Circle { center, radius, .. }) = element {
+            let to = Point::new(round_to(center.x, decimals), round_to(center.y, decimals));
+            let to_radius = round_to(*radius, decimals);
+            snapped.push((*center, *radius, to, to_radius));
+            *center = to;
+            *radius = to_radius;
+        }
+    });
+    if snapped.is_empty() {
+        return;
+    }
+
+    // The neighbour's chain was built by `lower`'s `circle_boundary` from the
+    // very same `PrimitiveRecognition`, so its numbers are bit-identical to the
+    // circle's and matching on equality identifies them exactly.
+    visit_elements_mut(&mut document.layers, &mut |element| {
+        let Element::FilledFace(face) = element else {
+            return;
+        };
+        for chain in &mut face.boundaries {
+            for &(center, radius, center_to, radius_to) in &snapped {
+                let (right, left) = (
+                    Point::new(center.x + radius, center.y),
+                    Point::new(center.x - radius, center.y),
+                );
+                let traces_this_circle = chain.segments.iter().any(|segment| {
+                    matches!(
+                        segment,
+                        PathSegment::Arc { radii, to, .. }
+                            if radii.x == radius && radii.y == radius
+                                && (*to == right || *to == left)
+                    )
+                });
+                if !traces_this_circle {
+                    continue;
+                }
+                let snap_point = |p: Point| {
+                    if p == right {
+                        Point::new(center_to.x + radius_to, center_to.y)
+                    } else if p == left {
+                        Point::new(center_to.x - radius_to, center_to.y)
+                    } else {
+                        p
+                    }
+                };
+                chain.start = snap_point(chain.start);
+                for segment in &mut chain.segments {
+                    if let PathSegment::Arc { radii, to, .. } = segment
+                        && radii.x == radius
+                        && radii.y == radius
+                    {
+                        *radii = Vec2::new(radius_to, radius_to);
+                        *to = snap_point(*to);
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Apply `visit` to every element, descending into groups.
+fn visit_elements_mut(layers: &mut [Layer], visit: &mut impl FnMut(&mut Element)) {
+    fn walk(elements: &mut [Element], visit: &mut impl FnMut(&mut Element)) {
+        for element in elements {
+            if let Element::Group(group) = element {
+                walk(&mut group.children, visit);
+            }
+            visit(element);
+        }
+    }
+    for layer in layers {
+        walk(&mut layer.elements, visit);
+    }
 }
 
 /// Escape text for XML content and attribute values (PTE-SEC-001).
@@ -340,6 +462,20 @@ pub fn serialize(
     }
 
     let decimals = choose_serialization_precision(document, config)?;
+
+    // The snap has to happen at the precision actually used, so it is done on
+    // a local copy here rather than on the caller's document: choosing a
+    // precision from already-snapped geometry could pick a coarser one and
+    // reintroduce exactly the disagreement this removes.
+    let snapped;
+    let document = if document_has_circle(document) {
+        let mut copy = document.clone();
+        snap_circles_to_grid(&mut copy, decimals);
+        snapped = copy;
+        &snapped
+    } else {
+        document
+    };
 
     let newline = if config.output.pretty { "\n" } else { "" };
     let indent = |depth: usize| {

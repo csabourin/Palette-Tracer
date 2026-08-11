@@ -41,10 +41,12 @@
 //!
 //! Multi-colour junctions are optimised once as shared vertices, using §10.4's
 //! barycentric evidence and PTE-TOPO-013's legality guards. Complete circles
-//! can remain semantic through SVG lowering (§11.7). Generic arcs (§11.4), the
-//! other primitive families, strokes (§13), gradients (§14) and fabrication
-//! (§16) are **not** implemented; unsupported requests are refused by name
-//! rather than silently approximated (PTE-NO-042).
+//! can remain semantic through SVG lowering (§11.7); an accepted circle's
+//! opaque neighbour retraces it as two exact arcs, written from the same
+//! rounded numbers so both faces describe one boundary. The generic §11.4 arc
+//! fit, the other primitive families, strokes (§13), gradients (§14) and
+//! fabrication (§16) are **not** implemented; unsupported requests are refused
+//! by name rather than silently approximated (PTE-NO-042).
 
 use palette_tracer_color::{Palette, PaletteEntry};
 use palette_tracer_core::config::{
@@ -95,7 +97,8 @@ pub struct Capabilities {
 /// engine did *not* do rather than inferring it from silence (§0.2).
 pub const UNIMPLEMENTED: &[&str] = &[
     "§11.7 rectangle, ellipse, rounded-rectangle and polygon recognition; circles only",
-    "the §11.4 circular arc model; lines and cubics only",
+    "the §11.4 circular arc *fit*; the fitter produces lines and cubics only, \
+     though a recognised §11.7 circle still lowers to arcs on its neighbour",
     "PTE-GEO-015..021 (§12 logo and lettering regularization)",
     "PTE-STROKE-001..009 (§13 centrelines and widths)",
     "PTE-GRAD-001..010 (§14 gradient reconstruction)",
@@ -416,11 +419,6 @@ impl Engine {
             name: "primitive_candidates",
             value: primitive_stats.candidates_evaluated,
         });
-        control.progress(ProgressEvent::Counted {
-            stage: Stage::Fit,
-            name: "circle_primitives_accepted",
-            value: u64::from(primitive_stats.circles_accepted),
-        });
         let fit = palette_tracer_geometry::fit_topology(
             &mut extraction.topology,
             &fit_options(config),
@@ -448,6 +446,16 @@ impl Engine {
         config
             .resources
             .check_output_elements(document.element_count())?;
+        // Counted from the document, not from recognition: lowering applies the
+        // final description-complexity gate, so a recognition can still be
+        // refused after `PrimitiveStats` was filled. Reporting the earlier
+        // number here would contradict `representation.primitives`, which is
+        // also counted from the document.
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Serialize,
+            name: "circle_primitives_accepted",
+            value: u64::from(palette_tracer_svg::count_segments(&document).3),
+        });
 
         let features: Vec<&str> = vec!["circle-primitives-v1"];
         let fallbacks: Vec<Fallback> = Vec::new();
