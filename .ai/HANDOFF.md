@@ -1,118 +1,109 @@
 # Handoff
 
 **Session date:** 2026-08-11
-**Branch:** `agent/recognize-circle-primitives`, from merged PR #22's `master`
-**Working slice:** PR C, the first §11.7 primitive-recognition slice: complete
-circles carried as typed geometry from the shared topology through the semantic
-digest and SVG. No Python application source was read or changed.
+**Branch:** `claude/qa-pr-20-21-6zws2f`, restarted from merged PR #23's `master`
+**Working slice:** QA of merged PR #23 (§11.7 circle recognition) and the fixes
+it found — seven, two of them blocking. The Kåsa fit and its refusal gates were
+sound; what followed them was not. The earlier slices in this file (the PR #21
+junction QA, the §10 build, and the configuration work) are kept below because
+their decisions are still context.
 
-## PR C: complete-circle primitive recognition
+## What the PR #23 QA found, and what changed
 
-`logo` and the now-implemented `recognize-primitives` modifier run recognition
-before generic §11 fitting. A centred, RMS-normalised Kåsa solve proposes a
-circle for a closed one-edge face. Acceptance requires full angular support,
-consistent signed turning, the configured radial displacement bound and the
-topology/material-complexity gates from §11.7. Every float decision uses
-`QuantKey`; candidates and samples charge the global work budget. The design,
-failure modes, tie rules, complexity and alternatives required by §34.2 are in
-`engine/docs/notes/primitive-recognition.md`.
-
-The result remains typed as `PrimitiveRecognition` until lowering, then as
-`Primitive::Circle`. It reaches the semantic digest and serialises as SVG
-`<circle>`. A neighbouring opaque face traverses the same recognized boundary
-as two exact arcs, so the primitive does not create a second, independently
-fitted copy of a shared interface (§11.8). Lowering indexes recognitions by face
-and edge with ordered maps rather than scanning all faces for every primitive.
-
-The decisive test regenerates the analytic `curves/circle-subpixel-1` raster
-and passes it through the real extractor. It recovers centre and radius within
-`0.20 px`, emits one semantic circle and records one primitive in the report.
-A second end-to-end test proves the opaque neighbour reuses exactly two arcs
-with zero exposed or overlapping diagnostic pixels. Unit gates reject partial
-arcs and squares, prove reversal equivalence, and exercise resource exhaustion.
-This intentionally does **not** implement §11.4 generic arcs, ellipses,
-rectangles, rounded rectangles, polygons or repeated-radius inference.
-
-All release gates passed on this exact tree:
+**One shared boundary was serialised as two different curves.** Lowering gets
+this right: the recognised face is a `<circle>` and its opaque neighbour two
+arcs through the same analytic circle. The writer then rounded them through
+separate paths — `precision_is_safe` checks chain *points* and primitive
+fields, never an arc's radii, and never the two elements against each other.
+Two defects fell out. The circle's `cx` landed on one value while the arc
+endpoints `cx ± r` rounded to a pair with a different midpoint; and because
+the arcs are exact semicircles, so their chord *is* the diameter, the rounded
+chord exceeded twice the rounded radius, at which point SVG 1.1 F.6.6.2
+obliges the renderer to scale the radii up and draw a circle that is not the
+one beside it. Over uniform centres and radii that is 25% of circles for the
+radii rule and 50% for the midpoint, at every precision — it does not improve
+with more decimals. Measured on one raster:
 
 ```
-make engine-test        417 tests + 2 doctests passed, 0 failed
-make engine-lint        cargo fmt and all-target Clippy clean
-make engine-wasm        workspace clean for wasm32-unknown-unknown
-make engine-deny        advisories ok, bans ok, licenses ok, sources ok
-make engine-corpus      13 fixtures, zero fitting fallback everywhere
-make engine-parity      13 fixtures, native and wasm32-wasip1 agree
-git diff --check        clean
+before   M77.7 40.8 A26.7 26.7 0 0 1 24.2 40.8 …   chord 53.5 vs diameter 53.4
+         <circle cx="51" …>                        centre 51 vs midpoint 50.95
+after    M77.7 40.8 A26.7 26.7 0 0 1 24.3 40.8 …   chord 53.4 = diameter
+         <circle cx="51" …>                        centre 51 = midpoint 51
 ```
 
-The corpus census is unchanged because it runs `flat-illustration` without the
-opt-in modifier; PR C changes representation only when recognition is enabled.
-The semantic algorithm version and feature set were bumped as required by
-PTE-DET-004.
+The serialiser now snaps an accepted circle to the chosen decimal grid and
+derives the arcs from the snapped `cx`, `cy`, `r`, so `cx' ± r'` are exact
+multiples of the grid. Arc radii joined the precision search. The snap happens
+at the precision actually used, on a local copy, because choosing a precision
+from already-snapped geometry could pick a coarser one and reintroduce exactly
+the disagreement it removes.
 
-Ten user-supplied 1536×1024 PNG presentation sheets were inspected but not
-committed. They are composited test cards, not raw fixtures: one advertised as
-transparent is RGB with a baked checkerboard, another advertised as JPEG is a
-PNG container, and several visibly embed third-party marks or character art.
-The user confirmed authorship/licence ownership of their files, but that does
-not make those embedded third-party elements suitable for an MIT clean-room
-corpus. A follow-up should recreate clean-room raw fixtures with manifests and
-commit the generator/source assets, not rename these sheets as engine inputs.
+**The gate that should have caught it could not.** `raster::coverage` runs on
+the document, where both sides still hold the exact `f64` circle, and
+`flatten_primitive` tessellates the circle at exactly the step count the arcs
+use — so a matching pair reduces to one polygon and the positive assertion
+cannot fail. That is the right choice for a diagnostic, but on its own it
+proves only that the code ran. There is now a negative control
+(`a_circle_that_disagrees_with_its_neighbour_is_detected`) and a test that
+reads the emitted bytes rather than the IR
+(`the_written_arcs_and_the_written_circle_are_the_same_numbers`), which is
+where this class of defect actually lives.
 
-The prior QA and §10 slices remain below because their lessons still constrain
-new geometry work.
+**At `logo` — the profile that enables recognition — the corpus circles were
+not recognised, and acceptance was a band rather than a threshold.** Two gates
+were closing from opposite sides:
 
-## Prior QA: what it found, and what changed
+* `max ≤ tolerance` let one sample veto the shape. `curves/circle-subpixel-0`
+  has p95 `0.134 px` over 224 samples and one loop-closure sample at
+  `0.617 px`, so under logo's `0.45 px` the engine refused its own analytic
+  circle on the strength of 1 sample in 224. The bound is now p99, with the
+  maximum kept as a backstop at half again.
+* `chain.segments.len() < 4` made recognition *non-monotonic*: a looser
+  tolerance lets the fitter compress a circle to three cubics, and the
+  three-segment chain then failed the test — so widening the tolerance turned a
+  semantic circle back into curves. Complexity is now counted in emitted
+  coordinates (three cubics is twenty against a circle's three), which cannot
+  invert.
 
-**A loop edge at a junction came apart.** `optimize_junctions` collected
-incident edges with `if start == v {..} else if end == v {..}`, so an edge whose
-two ends are the *same* vertex was recorded once and only its start moved. The
-closed chain opened, and the Appendix B validator that reruns after §10 failed
-the whole trace with `chain_starts_at_its_origin`. The topology is ordinary:
-two blocks meeting corner to corner, and 24 of the 19,683 three-label 3×3 label
-patterns produce it. Incidence is now one entry per end, which also makes its
-length equal the vertex degree; a vertex where those disagree is left on the
-grid. `a_loop_edge_at_a_junction_stays_closed` is the case, built from the real
-extractor rather than a hand-made topology.
+Together: `circle-subpixel-0` is recognised at logo's own default, and once a
+circle is granted no tolerance takes it away. Across 24 analytic circles at
+`0.8 px`, recognised rose from 10 to 14 with invalid arcs down from 1 to 0.
 
-**The legality guard was quadratic.** The crossing test scanned every chain in
-the image, for every incident ray, for every junction, allocating a polyline
-per visit. Measured against the commit before PR #21, on an antialiased colour
-mosaic:
+**The corpus was cited as evidence for a feature it never ran.** Both circle
+fixtures declared `flat-illustration` first and the tool traces
+`intendedProfiles[0]`, so the census could not have distinguished a working
+recogniser from an absent one. `curves/circle-subpixel-0` now declares `logo`
+first and the census carries `arcs` and `prims` columns: one primitive, two
+neighbour arcs, 473 bytes against 619 generic.
+
+**Smaller ones.** `UNIMPLEMENTED` claimed "lines and cubics only" in the same
+trace that emitted `A` commands; it now names the arc *fit* and says a
+recognised circle still lowers to arcs, and the `allowArcs` refusal says the
+same. `recognize-primitives` with `coloring-book` is refused by name instead of
+accepted and dropped. The `circle_primitives_accepted` progress counter is now
+taken from the lowered document, so it cannot disagree with
+`representation.primitives`.
+
+**Not changed, and named as a limit.** `curves/circle-subpixel-1` keeps an
+antialias fringe ring under `logo` (3 faces / 4 edges against 2 under
+`flat-illustration`), so the one-closed-edge precondition never holds and it is
+never eligible at any tolerance. Re-tuning segmentation to suit recognition is
+a bigger decision than this slice; the design note and status say so plainly.
+
+## Commands run for this slice
 
 ```
-             before #21   as merged   now
-128x128        33.7 ms     170 ms     61 ms
-256x256         144 ms    2.24 s     195 ms
-512x512         564 ms   35.5 s      829 ms
+cargo test --workspace   425 passed, 0 failed
+cargo clippy --workspace --all-targets -- -D warnings   clean
+cargo fmt --check                                       clean
+cargo check --workspace --target wasm32-unknown-unknown clean
+make engine-corpus   13 fixtures; circle-subpixel-0 now 1 primitive / 2 arcs
+make engine-parity   13 fixtures; native and wasm32-wasip1 agree
+git diff --check     clean
 ```
 
-The census was identical in all three columns: the scan cost 35 seconds at
-512×512 and reclassified nothing. It is now answered against a uniform-grid
-segment index built once per call, with boxes inflated by the trust radius so
-the index survives the moves it is checking.
-
-**The intersection gate was not scale-free.** `det` was compared to a fixed
-`1e-6`, but with unit normals `det = Σ c_i c_j sin²θ_ij`, so the test measured
-confidence as much as geometry: two weak nearly parallel lines passed and
-returned a point bounded only by the one-pixel trust radius -- observed 0.92 px
-from a truth whose grid corner was 0.53 px away. Dividing by the squared total
-weight makes it a question about angle. `nearly_parallel_junction_evidence_is_
-refused`.
-
-**`geometry.evidence_is_the_pixel_grid` was reworded but never gated.** It
-claimed §10 "found no usable subpixel coverage evidence" on every trace,
-including `pixel-art`, where §10 does not run at all. It is now emitted from
-the boundary-source census with its count, and `pixel-art` states its policy in
-its own words.
-
-**Smaller ones.** §10 now charges the work budget, so the stage is bounded like
-every other. The comment claiming a junction could upgrade a crisp incident
-edge described an unreachable path and is corrected. An empty `--palette` is
-refused by name instead of clearing a config file's entries and failing later
-as "mode is `fixed` but no entries were supplied".
-
-Every fixture digest is unchanged, native and under wasm32.
+`make engine-deny` was **not** run: `cargo-deny` is not installed in this
+environment. This slice adds no dependency.
 
 ## Configuration correctness
 

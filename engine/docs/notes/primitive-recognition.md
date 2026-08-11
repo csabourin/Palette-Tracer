@@ -19,8 +19,13 @@ radius }`. That record crosses the geometry/SVG crate boundary and becomes
 therefore hashes a circle, not a cubic approximation (PTE-GEO-011).
 
 The fitted generic chain is still computed. Lowering accepts the recognition
-only when it replaces at least four generic segments, making description
-complexity materially smaller. If the opposite face is opaque, that face
+only when the generic description costs at least twice the primitive's in
+emitted coordinates — three for a circle's `cx`, `cy`, `r`. Counting *segments*
+instead made recognition non-monotonic in tolerance: a looser bound lets the
+fitter compress a circle to three cubics, and a three-segment chain then failed
+a `< 4` test, so widening the tolerance turned a semantic circle back into
+curves. Three cubics is twenty coordinates against three;
+`a_looser_tolerance_never_withdraws_a_recognized_circle` holds the property. If the opposite face is opaque, that face
 traverses the same recognition as two exact SVG circular arcs. It is not left
 on the independently approximated cubics. The semantic `<circle>` and its
 neighbour therefore share one analytic boundary even though their SVG element
@@ -57,13 +62,22 @@ and no individual angular gap above `0.10` of a revolution. That last gate is
 what prevents a partial arc closed by one chord from impersonating a full
 circle.
 
-Residual is radial displacement. The maximum must not exceed the resolved
-`geometry.curveTolerancePx`, and p95 must not exceed half that tolerance. These
-are hard gates, not objective weights. In particular, the analytic radius-20
-diagnostic exposed an arbitrary loop-closure sample displaced by `0.65 px`;
-the recognizer correctly refused it under logo's `0.45 px` bound instead of
-loosening the profile. The committed radius-28 fixture passes when measured at
-`0.60 px`, with its centre and radius still inside §31.2's `0.20 px` gates.
+Residual is radial displacement, gated three ways: p95 at half the resolved
+`geometry.curveTolerancePx`, p99 at the tolerance itself, and the maximum at
+half again beyond it. These are hard gates, not objective weights.
+
+The top one is trimmed on purpose. Binding the *maximum* straight to the
+tolerance lets one sample veto the shape, and it did: the committed
+`curves/circle-subpixel-0` has p95 `0.134 px` over 224 samples and a single
+loop-closure sample at `0.617 px`, so under logo's `0.45 px` the engine refused
+its own analytic circle on the strength of 1 sample in 224. PTE-GEO-010 binds
+displacement to the resolved tolerance, which p99 does; the maximum stays as a
+backstop so no sample may wander far even though one may sit outside the bound.
+`one_outlying_sample_does_not_veto_an_otherwise_exact_circle` and
+`a_sample_far_outside_the_bound_still_refuses_the_circle` hold both halves.
+The fixture is now recognised at logo's own default, and the §25.3 census
+records it: `curves/circle-subpixel-0` is one primitive and two neighbour arcs,
+473 bytes against 619 for the generic form.
 
 All branch decisions above compare `QuantKey` values at `GEOMETRY_SCALE`.
 Face, edge and element order remains the existing raster-derived order.
@@ -77,6 +91,15 @@ Face, edge and element order remains the existing raster-derived order.
   insufficient complexity reduction leaves the generic fit untouched.
 * Both incident faces consume one `PrimitiveRecognition`; an opaque neighbour
   is lowered as exact arcs and never as the old cubic boundary.
+* Both are *written* from one set of numbers. The serialiser snaps an accepted
+  circle onto the chosen decimal grid and derives the neighbour's arc endpoints
+  and radii from the snapped `cx`, `cy`, `r`, so `cx' ± r'` are exact multiples
+  of the grid. Rounding the two elements independently pulled them apart: the
+  circle's centre landed on one value while the arc endpoints rounded to a pair
+  with another midpoint, and — the arcs being exact semicircles, so their chord
+  *is* the diameter — the rounded chord exceeded twice the rounded radius in
+  about a quarter of cases, at which point SVG 1.1 F.6.6.2 obliges the renderer
+  to scale the radii up and draw a circle that is not the one beside it.
 * Negative/non-finite primitive radii fail `VectorDocument` validation before
   serialisation.
 * Reversing the evidence preserves quantised centre and radius; only source
@@ -123,11 +146,21 @@ reported from stage `fit`.
 | Real extractor to semantic IR/SVG | `the_real_extractor_emits_a_semantic_circle` |
 | Opaque shared neighbour has no crack/overlap | `the_opaque_neighbour_reuses_the_exact_circle_as_arcs` |
 | Invalid radii rejected | `an_invalid_circle_radius_fails_the_finiteness_gate` |
+| The written arcs and the written circle are one boundary | `the_written_arcs_and_the_written_circle_are_the_same_numbers` |
+| The seam diagnostic can actually fail | `a_circle_that_disagrees_with_its_neighbour_is_detected` |
+| Recognition is monotone in tolerance | `a_looser_tolerance_never_withdraws_a_recognized_circle` |
+| One outlier does not veto a circle | `one_outlying_sample_does_not_veto_an_otherwise_exact_circle` |
+| A far sample still does | `a_sample_far_outside_the_bound_still_refuses_the_circle` |
+| Refused where it cannot apply | `recognizing_primitives_in_a_coloring_book_is_refused` |
 
-The end-to-end tests regenerate `curves/circle-subpixel-1`'s analytic raster
-(centre `(50.37, 40.61)`, radius `28`, 16×16 box supersampling) and traverse
-the real segmentation, topology, §10 reconstruction, fitter, typed document,
-semantic digest and SVG writer.
+The end-to-end tests raster the same analytic circle as
+`curves/circle-subpixel-1` (centre `(50.37, 40.61)`, radius `28`, 16×16 box
+supersampling) but under the *opposite* pixel-centre convention:
+`tools/make_fixtures.py` shades pixel `px` over `[px, px+1]`, these tests over
+`[px−0.5, px+0.5]`, which is why they carry a `0.5` correction. They are not
+the committed fixture and do not stand in for it. They traverse the real
+segmentation, topology, §10 reconstruction, fitter, typed document, semantic
+digest and SVG writer.
 
 ## Known limitations
 
@@ -137,6 +170,23 @@ regular polygons, or convert a generic partial arc to §11.4's arc model. Its
 thresholds are engineering choices measured by the analytic fixture, not a
 corpus calibration. The seam diagnostic is still first-party; §18.7's
 cross-renderer matrix remains unclaimed.
+
+Two limits are worth naming precisely, because they decide how often the
+feature fires at all.
+
+**Segmentation can remove the candidate before recognition sees it.** The
+precondition is one outer cycle carried by one closed shared edge.
+`curves/circle-subpixel-1` meets it under `flat-illustration` (2 faces) and
+*not* under `logo` (3 faces / 4 edges), where an antialias fringe ring
+survives — so the profile that switches recognition on is also the one whose
+segmentation can block it, and that fixture is never recognised at any
+tolerance. Nothing here changes segmentation to suit recognition; a future
+slice should decide whether a fringe ring around a recognised primitive is
+absorbed or tolerated.
+
+**Recognition still misses many analytic circles.** Sweeping 24 circles (six
+sub-pixel centres × four radii) at `0.8 px`: 14 recognised, 10 not — most of
+the misses being the segmentation case above rather than the residual gates.
 
 ## Provenance and licence
 

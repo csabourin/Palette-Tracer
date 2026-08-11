@@ -3,12 +3,13 @@
 `engine/SPEC.md` is authoritative. This document records evidence; it does not
 redefine requirements.
 
-**Assessed at:** 2026-08-11, after complete-circle primitive recognition.
-**Measured with:** `cargo test --workspace` → **417 tests and 2 doctests passed**;
+**Assessed at:** 2026-08-11, after the §11.7 circle-recognition QA fixes.
+**Measured with:** `cargo test --workspace` → **423 tests and 2 doctests passed**;
 `cargo clippy --workspace --all-targets -- -D warnings` → clean;
 `cargo fmt --check` → clean;
 `cargo check --workspace --target wasm32-unknown-unknown` → clean;
-`cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`;
+`cargo deny check` → not re-run this slice; `cargo-deny` is absent from the
+environment and no dependency changed;
 `make engine-parity` → **13 fixtures, native and wasm32 agree**.
 Toolchain `rustc 1.97.1` on `x86_64-unknown-linux-gnu`.
 
@@ -52,10 +53,20 @@ slice recognises one fully supported closed circular boundary before generic
 fitting and carries `Primitive::Circle` through the typed document, semantic
 digest and `<circle>` SVG. An opaque neighbouring face traverses the same
 analytic boundary as two exact arcs, so primitive editability does not trade
-away shared topology. Recognition is automatic in `logo` and available through
-`recognize-primitives`; every candidate still has to pass the resolved
-displacement bound. Other primitive families and the generic §11.4 arc
-candidate remain absent.
+away shared topology — and the two are *written* from one set of numbers, the
+neighbour's arc endpoints derived from the snapped `cx`, `cy`, `r`, so
+independent rounding cannot pull them apart. Recognition is automatic in
+`logo` and available through `recognize-primitives`; it is refused by name for
+`coloring-book`, which has no filled face to replace. Every candidate still has
+to pass the resolved displacement bound, now trimmed so a single outlying
+sample cannot veto an otherwise exact circle, and a complexity gate counted in
+emitted coordinates rather than segments, so a looser tolerance can no longer
+withdraw a circle it had already granted. `curves/circle-subpixel-0` is
+censused under `logo` in §25.3: one primitive, two neighbour arcs, 473 bytes
+against 619 generic. Other primitive families and the generic §11.4 arc
+candidate remain absent, and segmentation can still remove a candidate before
+recognition sees it — `curves/circle-subpixel-1` keeps an antialias fringe ring
+under `logo` and is never eligible.
 
 **Boundary evidence is now subpixel where the input carries it.** §10.3–§10.5
 are implemented: the compositing transfer is estimated from the evidence,
@@ -84,7 +95,7 @@ segments.
 | Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 13-fixture synthetic corpus with manifests (`tools/make_fixtures.py`); `cargo deny` wired to `make engine-deny` | No **real-world** corpus; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
 | Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 70 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
 | Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 28 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
-| Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 30 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`, junction topology in `crates/palette-tracer/tests/junction_topology.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners and DP segmentation, plus complete-circle recognition: `palette-tracer-geometry`, 53 tests, `docs/notes/curve-fitting.md`, `docs/notes/primitive-recognition.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; non-circular §11.7 primitives |
+| Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 30 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`, junction topology in `crates/palette-tracer/tests/junction_topology.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners and DP segmentation, plus complete-circle recognition: `palette-tracer-geometry`, 55 tests, `docs/notes/curve-fitting.md`, `docs/notes/primitive-recognition.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; non-circular §11.7 primitives |
 | Phase 4 — logo, illustration, fabrication | Partly conforming | Complete circles in `logo`, with a typed primitive and shared-neighbour lowering | Remaining §11.7 families, §12, §16 |
 | Phase 5 — lines, lettering, coloring books | Partly | `coloring-book` emits each interface once (§13.6) | All of §13.1–§13.5 |
 | Phase 6 — standard gradients | Not implemented | — | All of §14 |
@@ -144,14 +155,14 @@ the order the remaining ones should be taken in.
 | PTE-AA-007/008 | conforming | Hard trust region of one pixel; the per-chain solve pins endpoints; the joint pass updates one vertex and all incident shared chains exactly once | `no_sample_leaves_its_trust_region`, `the_per_chain_solve_does_not_move_endpoints`, `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `fitting_changes_only_the_chains` |
 | PTE-AA-009 | conforming | The report censuses each edge's actual evidence class, and `geometry.evidence_is_the_pixel_grid` is emitted from that census with its count rather than unconditionally. `pixel-art`, which never runs §10, says so in its own words | `make engine-corpus`; `boundary_source_census`; `the_report_names_what_is_not_implemented`, `pixel_art_does_not_claim_coverage_reconstruction_ran` |
 | PTE-GEO-001..009 | conforming | `palette-tracer-geometry`: preparation, multi-scale corners with hysteresis, line and cubic models, bidirectional error, DP segmentation | 53 geometry tests in total. `a_forty_five_degree_staircase_has_no_corners` (PTE-GEO-002), `a_ballooning_cubic_is_rejected_though_it_passes_through_the_samples` (§11.5), `the_chord_bound_is_never_exceeded_by_the_real_curve` (PTE-GEO-007), `exhausting_the_candidate_budget_falls_back_to_the_polyline` (PTE-GEO-005) |
-| PTE-GEO-010 | **partly conforming** | Complete-circle recognizer: full-support, radial residual/max displacement, topology and material-complexity gates; work is linear apart from the residual sort and charged to the global budget | `a_complete_circle_is_recovered_in_source_coordinates`, `a_partial_arc_is_not_misrepresented_as_a_complete_circle`, `a_square_fails_the_radial_displacement_gate`, `primitive_recognition_charges_the_work_budget`, `the_real_extractor_emits_a_semantic_circle`; rectangles, ellipses, rounded rectangles, polygons and repeated radii remain absent |
-| PTE-GEO-011 | conforming | `PrimitiveRecognition` remains typed across fitting/lowering; `Primitive::Circle` is hashed semantically and emitted as `<circle>`. An opaque neighbour gets the same circle as exact arcs | `the_real_extractor_emits_a_semantic_circle`, `the_opaque_neighbour_reuses_the_exact_circle_as_arcs`, `recognizing_a_reversed_circle_is_semantically_equivalent`; `docs/notes/primitive-recognition.md` |
+| PTE-GEO-010 | **partly conforming** | Complete-circle recognizer: full-support, radial residual (p95/p99 with a max backstop), topology, and a complexity gate counted in emitted coordinates so it cannot invert with tolerance; work is linear apart from the residual sort and charged to the global budget | `a_complete_circle_is_recovered_in_source_coordinates`, `a_partial_arc_is_not_misrepresented_as_a_complete_circle`, `a_square_fails_the_radial_displacement_gate`, `one_outlying_sample_does_not_veto_an_otherwise_exact_circle`, `a_sample_far_outside_the_bound_still_refuses_the_circle`, `a_looser_tolerance_never_withdraws_a_recognized_circle`, `primitive_recognition_charges_the_work_budget`, `the_real_extractor_emits_a_semantic_circle`. Rectangles, ellipses, rounded rectangles, polygons and repeated radii remain absent, and segmentation can strip a candidate's single-closed-edge precondition before recognition runs |
+| PTE-GEO-011 | conforming | `PrimitiveRecognition` remains typed across fitting/lowering; `Primitive::Circle` is hashed semantically and emitted as `<circle>`. An opaque neighbour gets the same circle as exact arcs, written from the same snapped numbers | `the_real_extractor_emits_a_semantic_circle`, `the_opaque_neighbour_reuses_the_exact_circle_as_arcs`, `the_written_arcs_and_the_written_circle_are_the_same_numbers`, `a_circle_that_disagrees_with_its_neighbour_is_detected`, `recognizing_a_reversed_circle_is_semantically_equivalent`; `docs/notes/primitive-recognition.md` |
 | PTE-GEO-012/013/014 | conforming | One chain per shared edge, fitted once; endpoints are junctions by construction; the validator reruns after fitting | `fitting_changes_only_the_chains`, `fitting_never_moves_a_chain_endpoint`, `fitting_a_reversed_chain_gives_the_reversed_fit_exactly` |
 | PTE-STROKE-010/011/012 | conforming | Interfaces emitted from shared edges | `no_coloring_book_interface_is_emitted_twice` |
 | PTE-STROKE-001..009 | **not implemented** | — | No centrelines |
 | PTE-GRAD-* , PTE-FAB-* | **not implemented** | Refused by name at configuration time | `a_stroke_or_gradient_request_is_refused_with_its_requirement` |
 | PTE-SVG-001..005 | conforming | `svg::writer` | `output_is_a_standalone_svg_with_a_finite_viewport`, `a_hole_is_empty_under_nonzero_winding` |
-| PTE-SVG-007/008/009 | conforming | Searched precision; automatic output reserves the subpixel reconstruction budget; one chain, two orientations | `precision_is_searched_not_fixed`, `automatic_precision_preserves_subpixel_reconstruction`, `shared_coordinates_are_byte_identical_after_reversal` |
+| PTE-SVG-007/008/009 | conforming | Searched precision, now including arc radii; automatic output reserves the subpixel reconstruction budget; one chain, two orientations. A recognised circle and its neighbour's arcs are snapped to the chosen grid together, so one shared boundary is written as one set of numbers even though the two elements differ in type | `precision_is_searched_not_fixed`, `automatic_precision_preserves_subpixel_reconstruction`, `shared_coordinates_are_byte_identical_after_reversal`, `the_written_arcs_and_the_written_circle_are_the_same_numbers` |
 | PTE-SVG-012/013 | conforming | Caller's bytes; alpha once | `a_palette_colour_survives_verbatim`, `alpha_is_applied_exactly_once` |
 | PTE-SEC-001 | conforming | `escape_xml` | `a_hostile_label_is_escaped` |
 | PTE-SEC-005/006/007 | conforming | `checked`, incremental limits; §10 charges the work budget per sample inverted and per junction probed, so no stage is outside the budget | `an_adversarial_region_count_hits_the_limit_cleanly` |
@@ -170,23 +181,23 @@ census below is that command's output, and it is the most useful single view of
 this build's strengths and weaknesses.
 
 ```
-fixture                            faces edges lines cubics   bytes minimal fallback
-topology/nested-rectangles             3     3    20      0     587       0        0
-topology/donut                         3     3    86     30    1523       0        0
-adversarial/checkerboard-4px           2   188  1024      0    7953       0        0
-topology/one-pixel-bridge              3     3    36      0     683       1        0
-topology/subpixel-t-junction           3     6    13      0     523       0        0
-curves/circle-subpixel-0               2     2     6      6     619       0        0
-curves/circle-subpixel-1               2     2     6      6     625       0        0
-curves/rounded-rectangle               2     2    12      8     616       0        0
-curves/star-acute-corners              2     2    20     20    1104       0        0
-curves/shallow-staircase               2     3     8      0     449       0        0
-alpha/transparent-arbitrary-rgb        2     2    12      0     485       0        0
-color/near-neutral-bands               3     6    12      0     518       0        0
-pixel-art/diagonals                   34    96  1984      0   13298       0        0
+fixture                            faces edges lines cubics  arcs prims   bytes minimal fallback
+topology/nested-rectangles             3     3    20      0     0     0     587       0        0
+topology/donut                         3     3    86     30     0     0    1523       0        0
+adversarial/checkerboard-4px           2   188  1024      0     0     0    7953       0        0
+topology/one-pixel-bridge              3     3    36      0     0     0     683       1        0
+topology/subpixel-t-junction           3     6    13      0     0     0     523       0        0
+curves/circle-subpixel-0               2     2     4      0     2     1     473       0        0
+curves/circle-subpixel-1               2     2     6      6     0     0     625       0        0
+curves/rounded-rectangle               2     2    12      8     0     0     616       0        0
+curves/star-acute-corners              2     2    20     20     0     0    1104       0        0
+curves/shallow-staircase               2     3     8      0     0     0     449       0        0
+alpha/transparent-arbitrary-rgb        2     2    12      0     0     0     485       0        0
+color/near-neutral-bands               3     6    12      0     0     0     518       0        0
+pixel-art/diagonals                   34    96  1984      0     0     0   13298       0        0
 ```
 
-Five things to read out of it.
+Six things to read out of it.
 
 **The fitting search never failed, and now rarely has anything left to
 simplify.** The `fallback` column — chains that exhausted the candidate budget
@@ -248,6 +259,17 @@ is the honest answer: it is generated hard-edged, so there is no coverage to
 invert. Item 1 in `docs/notes/curve-fitting.md` is therefore narrowed rather
 than removed — §10 fixes the antialiased staircase, which is the common case,
 and cannot fix the un-antialiased one, which carries no information.
+
+---
+
+**A recognised circle is measured, not just implemented.**
+`curves/circle-subpixel-0` declares `logo` first, so the census traces it with
+recognition on: one `prims`, two `arcs` for the neighbour that shares the same
+analytic boundary, and `473` bytes against `619` for the generic cubic form —
+a 24% smaller document for the same shape. The row is the reason the corpus is
+evidence for §11.7 at all; every other fixture in the table declares a profile
+where recognition does not run, so before this the census could not have
+distinguished a working recogniser from an absent one.
 
 ---
 

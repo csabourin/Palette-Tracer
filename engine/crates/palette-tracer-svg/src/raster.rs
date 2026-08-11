@@ -172,6 +172,12 @@ fn flatten_primitive(primitive: &Primitive) -> Option<Vec<Point>> {
     // tessellation here makes the seam diagnostic compare the same polygon in
     // opposite winding, rather than measuring two different approximations of
     // the same analytic circle.
+    //
+    // The consequence is that a *matching* pair reduces to one polygon, so the
+    // positive case cannot fail for flattening reasons -- which is the point,
+    // but it also means the positive case alone proves nothing.
+    // `a_circle_that_disagrees_with_its_neighbour_is_detected` is the negative
+    // control: it perturbs the primitive and requires the diagnostic to say so.
     const STEPS: u32 = 64;
     let (center, rx, ry) = match primitive {
         Primitive::Circle { center, radius, .. } => (*center, *radius, *radius),

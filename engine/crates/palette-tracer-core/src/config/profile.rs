@@ -167,6 +167,14 @@ impl Profile {
                 reason: "pixel art has no medial model to infer (PTE-TOPO-010)",
             });
         }
+        if has(Modifier::RecognizePrimitives) && self == Self::ColoringBook {
+            return Err(ConfigError::IncompatibleCombination {
+                first: "modifier `recognize-primitives`".into(),
+                second: "profile `coloring-book`".into(),
+                reason: "a coloring book emits interfaces as strokes, so there is no \
+                         filled face for a primitive to replace (§13.6, PTE-GEO-010)",
+            });
+        }
         if has(Modifier::AllowExperimentalShading) && !has(Modifier::AllowPortableGradients) {
             return Err(ConfigError::IncompatibleCombination {
                 first: "modifier `allow-experimental-shading`".into(),
@@ -601,6 +609,11 @@ impl Profile {
         // cubic; this build fits lines and cubics only. Accepting the request
         // and quietly emitting cubics would be exactly the silent substitution
         // the §33 list exists to prevent.
+        //
+        // This refuses the arc *fit*. It is not a promise that no `A` command
+        // appears: a §11.7 circle accepted by recognition is lowered as two
+        // exact arcs on its opaque neighbour, which is the only way both faces
+        // of that boundary can be the same curve (PTE-TOPO-001).
         if geometry.allow_arcs {
             return Err(ConfigError::UnsupportedInThisBuild {
                 field: "geometry.allowArcs",
@@ -871,6 +884,23 @@ mod tests {
                 modifier.as_str()
             );
         }
+    }
+
+    /// PTE-NO-042: a modifier a profile cannot act on is refused by name, not
+    /// accepted and dropped. `coloring-book` lowers interfaces as strokes, so
+    /// it never reaches the primitive path at all.
+    #[test]
+    fn recognizing_primitives_in_a_coloring_book_is_refused() {
+        let mut config = TraceConfig::for_profile(Profile::ColoringBook);
+        config.modifiers.push(Modifier::RecognizePrimitives);
+        let error = Profile::ColoringBook
+            .check_modifiers(&config.modifiers)
+            .unwrap_err();
+        assert_eq!(error.code(), "config.incompatible_combination");
+        assert!(
+            format!("{error}").contains("recognize-primitives"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -42,7 +42,7 @@ def main() -> int:
 
     header = (
         f"{'fixture':<34}{'faces':>6}{'edges':>6}{'lines':>6}"
-        f"{'cubics':>7}{'bytes':>8}{'minimal':>8}{'fallback':>9}"
+        f"{'cubics':>7}{'arcs':>6}{'prims':>6}{'bytes':>8}{'minimal':>8}{'fallback':>9}"
     )
     print(header)
     print("-" * len(header))
@@ -69,6 +69,8 @@ def main() -> int:
             f"{report['topology']['sharedEdges']:>6}"
             f"{representation['lines']:>6}"
             f"{representation['cubics']:>7}"
+            f"{representation['arcs']:>6}"
+            f"{representation['primitives']:>6}"
             f"{representation['svgBytes']:>8}"
             f"{warning_count(report, 'geometry.chains_already_minimal'):>8}"
             f"{representation['polylineFallbacks']:>9}"
@@ -76,6 +78,8 @@ def main() -> int:
 
     print()
     print(
+        "prims    = §11.7 semantic primitives; `arcs` beside one is its opaque\n"
+        "           neighbour retracing the same analytic circle\n"
         "minimal  = chains whose polyline was already the simplest faithful form\n"
         "fallback = chains that exhausted the fitting budget (PTE-GEO-005); a\n"
         "           non-zero column here is a search failure, `minimal` is not."
