@@ -3,8 +3,8 @@
 `engine/SPEC.md` is authoritative. This document records evidence; it does not
 redefine requirements.
 
-**Assessed at:** 2026-08-11, after shared subpixel junction optimisation.
-**Measured with:** `cargo test --workspace` → **404 passed, 0 failed**;
+**Assessed at:** 2026-08-11, after the junction-pass QA fixes.
+**Measured with:** `cargo test --workspace` → **410 passed, 0 failed**;
 `cargo clippy --workspace --all-targets -- -D warnings` → clean;
 `cargo fmt --check` → clean;
 `cargo check --workspace --target wasm32-unknown-unknown` → clean;
@@ -54,9 +54,8 @@ moves each boundary sample along its own normal inside a trust region. The
 encoded-sRGB transfer hypothesis is a deliberate real-input compatibility
 extension to §10.2 and means PTE-AA-001 is only partly conforming. Boundaries
 meeting in three- or four-colour junctions are solved once as shared vertices,
-with cyclic-order, crossing and displacement guards.
-Individual boundaries
-are reported as `coverage_reconstructed`,
+with cyclic-order, crossing and displacement guards. Individual boundaries are
+reported as `coverage_reconstructed`,
 `crisp_grid`, `low_confidence_fallback` or `pixel_art_policy` according to what
 actually happened to each one, and §31.2's synthetic geometry gates are
 **measured and met** — see the table below.
@@ -75,7 +74,7 @@ segments.
 | Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 13-fixture synthetic corpus with manifests (`tools/make_fixtures.py`); `cargo deny` wired to `make engine-deny` | No **real-world** corpus; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
 | Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 70 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
 | Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 28 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
-| Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 27 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners, DP segmentation: `palette-tracer-geometry`, 48 tests, `docs/notes/curve-fitting.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; §11.7 primitives (PTE-GEO-010/011) |
+| Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 30 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`, junction topology in `crates/palette-tracer/tests/junction_topology.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners, DP segmentation: `palette-tracer-geometry`, 48 tests, `docs/notes/curve-fitting.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; §11.7 primitives (PTE-GEO-010/011) |
 | Phase 4 — logo, illustration, fabrication | Not implemented | — | §11.7, §12, §16 |
 | Phase 5 — lines, lettering, coloring books | Partly | `coloring-book` emits each interface once (§13.6) | All of §13.1–§13.5 |
 | Phase 6 — standard gradients | Not implemented | — | All of §14 |
@@ -123,7 +122,7 @@ the order the remaining ones should be taken in.
 | PTE-SEG-018/019 | **not implemented** | — | No tiling |
 | PTE-TOPO-001..007 | conforming | `topology::extract` | `twin_traversals_are_exact_reverses_of_one_chain`, `every_face_cycle_closes_exactly_once` |
 | PTE-TOPO-008/009/010 | **partly** | §9.4 energy with data, continuity, mixture and connectivity terms | `reflection_reflects_the_decisions`. PTE-TOPO-009's asymptotic-decider data rule is **not** implemented; the data term is colour similarity. Of Kopf–Lischinski's heuristics only sparse-pixel is implemented |
-| PTE-TOPO-011/012/013 | conforming | One weighted 2×2 solve per eligible shared vertex; every incident chain receives the same `Point`; trust radius, cyclic order and non-incident crossing are hard gates | `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `a_junction_move_that_reorders_incident_edges_is_rejected`, `a_junction_move_that_crosses_a_nonincident_edge_is_rejected`; `docs/notes/junction-optimization.md` |
+| PTE-TOPO-011/012/013 | conforming | One weighted 2×2 solve per eligible shared vertex; every incident *end* receives the same `Point`, including both ends of a loop edge; trust radius, cyclic order and non-incident crossing are hard gates, the last answered against a segment index rather than a full scan | `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `a_loop_edge_at_a_junction_stays_closed`, `a_junction_move_that_reorders_incident_edges_is_rejected`, `a_junction_move_that_crosses_a_nonincident_edge_is_rejected`; `docs/notes/junction-optimization.md`. Junctions are swept in vertex order, not solved jointly |
 | PTE-TOPO-014 | conforming | Precision search refuses a collapse | `precision_never_collapses_two_distinct_points` |
 | PTE-TOPO-015 | conforming | | `shared_mosaics_have_no_exposed_seam_pixels`, with the first-party rasteriser |
 | PTE-TOPO-016/017/018 | partly | Modes are distinct and recorded in the layer role | Only `shared-mosaic` is produced; `stacked` and `separate-operations` are refused |
@@ -131,9 +130,9 @@ the order the remaining ones should be taken in.
 | PTE-AA-003 | conforming | `aa::square`: exact piecewise analytic square/half-plane inversion, the first of §10.3's three options. One `sqrt`, no iteration, so the decision is bit-identical across targets (PTE-DET-004) | `the_inverse_recovers_the_offset_that_produced_the_coverage`, `the_inverse_is_monotone_in_every_octant`, `reversing_the_labels_mirrors_the_offset`, all over every octant |
 | PTE-AA-004 | conforming | `aa::normal`: tangents from the extracted polyline over a five-sample window | `a_forty_five_degree_staircase_reads_as_a_diagonal_not_as_axis_steps`, with `a_one_sample_window_would_alternate_between_axis_directions` measuring what the requirement forbids |
 | PTE-AA-005 | conforming | Confidence from mixture residual, colour separation and normal stability; offsets bounded by the formula rather than clamped | `every_offset_lies_within_the_pixel_support`, `stability_falls_where_the_boundary_turns_a_corner`, `no_sample_leaves_its_trust_region` |
-| PTE-AA-006 | conforming | §10.4 barycentric weights gate and weight one shared junction solve; they never override topology constraints | `three_colour_barycentric_weights_are_recovered`, `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `a_four_colour_junction_is_reconstructed_as_one_shared_vertex` |
+| PTE-AA-006 | conforming | §10.4 barycentric weights gate and weight one shared junction solve; they never override topology constraints, and the intersection gate is scale-free so weak nearly parallel evidence cannot buy a position | `three_colour_barycentric_weights_are_recovered`, `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `a_four_colour_junction_is_reconstructed_as_one_shared_vertex`, `nearly_parallel_junction_evidence_is_refused` |
 | PTE-AA-007/008 | conforming | Hard trust region of one pixel; the per-chain solve pins endpoints; the joint pass updates one vertex and all incident shared chains exactly once | `no_sample_leaves_its_trust_region`, `the_per_chain_solve_does_not_move_endpoints`, `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `fitting_changes_only_the_chains` |
-| PTE-AA-009 | conforming | The report censuses each edge's actual evidence class. It previously derived the census from the profile, so `coverage_reconstructed` was hard-coded to zero | `make engine-corpus`; `boundary_source_census` |
+| PTE-AA-009 | conforming | The report censuses each edge's actual evidence class, and `geometry.evidence_is_the_pixel_grid` is emitted from that census with its count rather than unconditionally. `pixel-art`, which never runs §10, says so in its own words | `make engine-corpus`; `boundary_source_census`; `the_report_names_what_is_not_implemented`, `pixel_art_does_not_claim_coverage_reconstruction_ran` |
 | PTE-GEO-001..009 | conforming | `palette-tracer-geometry`: preparation, multi-scale corners with hysteresis, line and cubic models, bidirectional error, DP segmentation | 48 tests. `a_forty_five_degree_staircase_has_no_corners` (PTE-GEO-002), `a_ballooning_cubic_is_rejected_though_it_passes_through_the_samples` (§11.5), `the_chord_bound_is_never_exceeded_by_the_real_curve` (PTE-GEO-007), `exhausting_the_candidate_budget_falls_back_to_the_polyline` (PTE-GEO-005) |
 | PTE-GEO-010/011 | **not implemented** | — | §11.7 primitive recognition; a circle is cubics, not a circle |
 | PTE-GEO-012/013/014 | conforming | One chain per shared edge, fitted once; endpoints are junctions by construction; the validator reruns after fitting | `fitting_changes_only_the_chains`, `fitting_never_moves_a_chain_endpoint`, `fitting_a_reversed_chain_gives_the_reversed_fit_exactly` |
@@ -144,7 +143,7 @@ the order the remaining ones should be taken in.
 | PTE-SVG-007/008/009 | conforming | Searched precision; automatic output reserves the subpixel reconstruction budget; one chain, two orientations | `precision_is_searched_not_fixed`, `automatic_precision_preserves_subpixel_reconstruction`, `shared_coordinates_are_byte_identical_after_reversal` |
 | PTE-SVG-012/013 | conforming | Caller's bytes; alpha once | `a_palette_colour_survives_verbatim`, `alpha_is_applied_exactly_once` |
 | PTE-SEC-001 | conforming | `escape_xml` | `a_hostile_label_is_escaped` |
-| PTE-SEC-005/006/007 | conforming | `checked`, incremental limits | `an_adversarial_region_count_hits_the_limit_cleanly` |
+| PTE-SEC-005/006/007 | conforming | `checked`, incremental limits; §10 charges the work budget per sample inverted and per junction probed, so no stage is outside the budget | `an_adversarial_region_count_hits_the_limit_cleanly` |
 | PTE-SEC-009 | conforming | `unsafe_code = "deny"` workspace-wide | The workspace lint table |
 | PTE-DET-001..004 | conforming | Quantised keys, stable heaps, no unordered iteration in an output path | `determinism.rs`, 8 tests, plus `make engine-parity`: the same engine compiled for `wasm32-wasip1` and run under Node's V8 produces byte-identical semantic digests on all 13 fixtures. Browser-engine parity beyond V8 is still unproven |
 | PTE-LIC-001..005 | conforming | MIT-only engine: ADR-0004; clean-room and one-way dependency boundary: ADR-0003; `deny.toml`, `THIRD_PARTY_NOTICES.md` | `make engine-deny` → `advisories ok, bans ok, licenses ok, sources ok`. `cargo metadata` reports the workspace packages as MIT |

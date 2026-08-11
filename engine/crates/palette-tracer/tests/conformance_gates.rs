@@ -464,18 +464,55 @@ fn the_report_names_what_is_not_implemented() {
             .all(|r| !r.contains("PTE-AA-006") && !r.contains("PTE-TOPO-011")),
         "implemented shared-junction reconstruction must not be named as absent"
     );
-    assert!(
-        output
-            .report
-            .warnings
-            .iter()
-            .any(|w| w.code == "geometry.evidence_is_the_pixel_grid"),
-        "this hard-edged fixture must state that its boundary evidence remains \
-         the pixel grid"
-    );
+    let grid = output
+        .report
+        .warnings
+        .iter()
+        .find(|w| w.code == "geometry.evidence_is_the_pixel_grid")
+        .expect("this hard-edged fixture must say its boundaries are on the grid");
     // PTE-AA-009: the boundary source census reflects what actually happened.
     assert_eq!(output.report.boundary_sources.coverage_reconstructed, 0);
     assert!(output.report.boundary_sources.crisp_grid > 0);
+    // The warning has to *be* that census rather than restate a constant. It
+    // used to be pushed unconditionally with fixed prose, so it said the same
+    // thing about a trace that reconstructed every boundary and about one that
+    // reconstructed none.
+    assert!(
+        grid.message
+            .contains(&output.report.boundary_sources.crisp_grid.to_string()),
+        "the warning must name how many boundaries it is about: {}",
+        grid.message
+    );
+    assert!(
+        grid.message.contains("§10"),
+        "and say what looked and found nothing: {}",
+        grid.message
+    );
+}
+
+/// §15 and PTE-TOPO-010: `pixel-art` never runs §10, so its report must not
+/// describe boundaries as evidence §10 looked for and did not find. The two
+/// outcomes are different facts about the trace.
+#[test]
+fn pixel_art_does_not_claim_coverage_reconstruction_ran() {
+    let output = trace(&checkerboard(), Profile::PixelArt);
+    let grid = output
+        .report
+        .warnings
+        .iter()
+        .find(|w| w.code == "geometry.evidence_is_the_pixel_grid")
+        .expect("pixel art states its boundary policy");
+    assert!(
+        grid.message.contains("policy"),
+        "pixel art's boundaries are a policy, not a failed search: {}",
+        grid.message
+    );
+    assert!(
+        grid.message
+            .contains(&output.report.boundary_sources.pixel_art_policy.to_string()),
+        "and the count is the pixel-art census: {}",
+        grid.message
+    );
 }
 
 /// PTE-GEO-025: pixel art must not assume antialias coverage.

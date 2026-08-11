@@ -1,16 +1,66 @@
 # Handoff
 
 **Session date:** 2026-08-11
-**Branch:** `agent/optimize-subpixel-junctions`, from merged PR #20's `master`
-**Working slice:** implemented PR B: §10.4 multi-colour evidence now drives one
-shared subpixel solve per eligible junction, with PTE-TOPO-013 trust, cyclic
-order and non-incident crossing guards. All incident chains receive the exact
-same point. Added the analytic `topology/subpixel-t-junction` corpus fixture and
-`docs/notes/junction-optimization.md`. No Python application source was read or
-changed; only the engine's first-party fixture generator was edited.
+**Branch:** `claude/qa-pr-20-21-6zws2f`, from merged PR #21's `master`
+**Working slice:** QA of merged PR #20 and PR #21, and the fixes it found. PR
+#20 was correct as described. PR #21's junction pass had two defects that a
+merged change should not carry, plus four smaller ones; all seven are fixed
+here with regression tests. No Python application source was read or changed.
 
-The previous configuration slice remains described below because its decisions
-are still relevant context.
+The two slices before this one are described below because their decisions are
+still relevant context.
+
+## What the QA found, and what changed
+
+**A loop edge at a junction came apart.** `optimize_junctions` collected
+incident edges with `if start == v {..} else if end == v {..}`, so an edge whose
+two ends are the *same* vertex was recorded once and only its start moved. The
+closed chain opened, and the Appendix B validator that reruns after §10 failed
+the whole trace with `chain_starts_at_its_origin`. The topology is ordinary:
+two blocks meeting corner to corner, and 24 of the 19,683 three-label 3×3 label
+patterns produce it. Incidence is now one entry per end, which also makes its
+length equal the vertex degree; a vertex where those disagree is left on the
+grid. `a_loop_edge_at_a_junction_stays_closed` is the case, built from the real
+extractor rather than a hand-made topology.
+
+**The legality guard was quadratic.** The crossing test scanned every chain in
+the image, for every incident ray, for every junction, allocating a polyline
+per visit. Measured against the commit before PR #21, on an antialiased colour
+mosaic:
+
+```
+             before #21   as merged   now
+128x128        33.7 ms     170 ms     61 ms
+256x256         144 ms    2.24 s     195 ms
+512x512         564 ms   35.5 s      829 ms
+```
+
+The census was identical in all three columns: the scan cost 35 seconds at
+512×512 and reclassified nothing. It is now answered against a uniform-grid
+segment index built once per call, with boxes inflated by the trust radius so
+the index survives the moves it is checking.
+
+**The intersection gate was not scale-free.** `det` was compared to a fixed
+`1e-6`, but with unit normals `det = Σ c_i c_j sin²θ_ij`, so the test measured
+confidence as much as geometry: two weak nearly parallel lines passed and
+returned a point bounded only by the one-pixel trust radius -- observed 0.92 px
+from a truth whose grid corner was 0.53 px away. Dividing by the squared total
+weight makes it a question about angle. `nearly_parallel_junction_evidence_is_
+refused`.
+
+**`geometry.evidence_is_the_pixel_grid` was reworded but never gated.** It
+claimed §10 "found no usable subpixel coverage evidence" on every trace,
+including `pixel-art`, where §10 does not run at all. It is now emitted from
+the boundary-source census with its count, and `pixel-art` states its policy in
+its own words.
+
+**Smaller ones.** §10 now charges the work budget, so the stage is bounded like
+every other. The comment claiming a junction could upgrade a crisp incident
+edge described an unreachable path and is corrected. An empty `--palette` is
+refused by name instead of clearing a config file's entries and failing later
+as "mode is `fixed` but no entries were supplied".
+
+Every fixture digest is unchanged, native and under wasm32.
 
 ## Configuration correctness
 
@@ -105,7 +155,7 @@ for 4-connected blobs.
 
 ## What changed
 
-**§10 exists.** New crate `palette-tracer-aa`, 27 tests, wired as stage E.5
+**§10 exists.** New crate `palette-tracer-aa`, 30 tests, wired as stage E.5
 between topology extraction and §11 fitting:
 
 * **§10.2** — `two_color_best` estimates the compositing transfer from the
@@ -149,13 +199,14 @@ star-acute-corners       47    556     12   6160   ->       2     20     20   11
 ```
 
 Every previously existing fixture is byte-identical, including
-`pixel-art/diagonals` and `topology/one-pixel-bridge`; PR B adds the thirteenth
-fixture `topology/subpixel-t-junction`.
+`pixel-art/diagonals` and `topology/one-pixel-bridge`; the junction slice added
+the thirteenth fixture `topology/subpixel-t-junction`. The QA fixes changed no
+fixture's digest, native or under wasm32.
 
 ## Commands run, and what they actually returned
 
 ```
-cd engine && cargo test --workspace          404 passed, 0 failed
+cd engine && cargo test --workspace          410 passed, 0 failed
 cd engine && cargo clippy --workspace --all-targets -- -D warnings   clean
 cd engine && cargo fmt --check                                       clean
 cd engine && cargo check --workspace --target wasm32-unknown-unknown clean
@@ -164,17 +215,21 @@ make engine-parity      13 fixture(s), native and wasm32 agree
 make engine-corpus      the census above
 ```
 
-For PR B specifically, the combined gate command returned:
+For this QA slice specifically, the combined gate command returned:
 
 ```
-make engine-test        404 passed, 0 failed
+make engine-test        410 passed, 0 failed
 make engine-lint        fmt clean; Clippy clean with -D warnings
-make engine-wasm        workspace check clean for wasm32-unknown-linux-gnu
-make engine-deny        advisories ok, bans ok, licenses ok, sources ok
-make engine-corpus      13 fixtures; T junction is 3 faces / 6 edges / no fallback
+make engine-wasm        workspace check clean for wasm32-unknown-unknown
+make engine-corpus      13 fixtures; census byte-identical to the previous slice
 make engine-parity      13 fixtures; native and wasm32-wasip1 agree
 git diff --check        clean
 ```
+
+`make engine-deny` was **not** re-run: `cargo-deny` is not installed in this
+environment. This slice adds no dependency, so the previous slice's result
+still describes the graph, but it is a claim carried forward rather than one
+measured here.
 
 For the previous configuration slice specifically:
 
@@ -260,8 +315,9 @@ recognition gates and serialization that preserves the semantic primitive.
 
 The closest §10 follow-up is evidence pooling: the two-colour compositing
 transfer is still selected per pixel, and the multi-colour junction model is
-linear-light only. These are declared limitations, not blockers for the shared
-junction implementation.
+linear-light only. Junctions are also swept in vertex order rather than solved
+jointly. These are declared limitations, not blockers for the shared junction
+implementation.
 
 ## Unverified assumptions
 

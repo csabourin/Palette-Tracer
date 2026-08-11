@@ -320,6 +320,36 @@ fn an_unimplemented_profile_is_refused_not_downgraded() {
 
 // --- PTE-API-015: flag precedence -----------------------------------------
 
+/// An empty `--palette` is refused by name.
+///
+/// It is still an override, so accepting it would clear a config file's
+/// entries and then fail deep inside validation as "palette.mode is `fixed`
+/// but no entries were supplied" -- a message that blames the file for what
+/// the flag did.
+#[test]
+fn an_empty_palette_flag_is_refused_by_name() {
+    let scratch = Scratch::new("empty-palette");
+    let input = scratch.write("in.ppm", &ppm_fixture());
+
+    let run = pte(
+        &[
+            "trace",
+            "--palette",
+            "",
+            &s(&input),
+            &s(&scratch.path("out.svg")),
+        ],
+        None,
+    );
+
+    assert_eq!(run.code, 2, "stderr was: {}", run.stderr);
+    assert!(
+        run.stderr.contains("--palette"),
+        "the flag must be named: {}",
+        run.stderr
+    );
+}
+
 /// A flag beats the same field in `--config`. The check is not that the command
 /// succeeded but that the *effective* value is the flag's, read back from
 /// `--print-effective-config`, which is the engine's own account of what it

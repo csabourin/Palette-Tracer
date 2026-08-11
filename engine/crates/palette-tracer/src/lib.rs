@@ -346,6 +346,7 @@ impl Engine {
                 image,
                 &face_colors,
                 &palette_tracer_aa::ReconstructOptions::default(),
+                budget,
                 control,
             )?;
             // PTE-GEO-014's rule applies to any post-extraction change of
@@ -673,18 +674,42 @@ impl Engine {
                 .about("PTE-COLOR-012"),
             );
         }
-        // §0.2: a trace with no usable coverage evidence says so explicitly.
-        // This is an input outcome, not a missing implementation: §10 ran and
-        // retained the honest crisp estimate (§10.6).
-        warnings.push(
-            Warning::info(
-                "geometry.evidence_is_the_pixel_grid",
-                "some boundary positions may remain on pixel-cell interfaces \
-                 where §10 found no usable subpixel coverage evidence"
-                    .to_owned(),
-            )
-            .about("PTE-AA-009"),
-        );
+        // §0.2: boundaries left on the pixel grid are named, and only when
+        // there are some. The text describes an outcome of §10 -- coverage
+        // that was looked for and not found -- so it is emitted from the
+        // census of what actually happened rather than on every trace.
+        //
+        // The two profile cases are different facts and must not share a
+        // sentence: `pixel-art` never runs §10 at all (§15, PTE-TOPO-010), so
+        // saying §10 "found no usable evidence" there would be a report of
+        // work that did not happen.
+        let boundary_sources = boundary_source_census(&extraction.topology);
+        if config.profile == Profile::PixelArt {
+            warnings.push(
+                Warning::info(
+                    "geometry.evidence_is_the_pixel_grid",
+                    format!(
+                        "{} boundaries are on pixel-cell interfaces by policy: \
+                         `pixel-art` does not run §10 coverage reconstruction",
+                        boundary_sources.pixel_art_policy
+                    ),
+                )
+                .about("PTE-AA-009"),
+            );
+        } else if boundary_sources.crisp_grid > 0 {
+            warnings.push(
+                Warning::info(
+                    "geometry.evidence_is_the_pixel_grid",
+                    format!(
+                        "{} of {} boundaries remain on pixel-cell interfaces, where \
+                         §10 found no usable subpixel coverage evidence",
+                        boundary_sources.crisp_grid,
+                        extraction.topology.edges.len()
+                    ),
+                )
+                .about("PTE-AA-009"),
+            );
+        }
         let chains = fit.chains_fitted
             + fit.polyline_fallbacks
             + fit.chains_already_minimal
@@ -810,7 +835,7 @@ impl Engine {
             // derived from the profile, which could only ever restate the
             // configuration; now §10 records its outcome on every edge and
             // this counts them.
-            boundary_sources: boundary_source_census(&extraction.topology),
+            boundary_sources,
             resources: budget.statistics(),
             warnings,
             fallbacks,
