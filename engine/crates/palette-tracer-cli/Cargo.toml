@@ -17,5 +17,8 @@ palette-tracer.workspace = true
 palette-tracer-core.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true
