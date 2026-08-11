@@ -42,7 +42,7 @@
 //! property directly, and `a_quarter_pixel_crack_is_detected` fixes the
 //! resolution the tests rely on.
 
-use palette_tracer_core::ir::{CurveChain, Element, PathSegment, Point, VectorDocument};
+use palette_tracer_core::ir::{CurveChain, Element, PathSegment, Point, Primitive, VectorDocument};
 
 /// Subsamples per axis inside each pixel.
 ///
@@ -145,12 +145,17 @@ pub fn coverage(document: &VectorDocument, width: u32, height: u32) -> Coverage 
     let mut total = vec![0.0f64; (width * height) as usize];
     let mut faces = vec![0u32; (width * height) as usize];
 
-    document.for_each_element(|element| {
-        let Element::FilledFace(face) = element else {
-            return;
-        };
-        let polygons: Vec<Vec<Point>> = face.boundaries.iter().map(flatten).collect();
-        accumulate(&polygons, width, height, &mut total, &mut faces);
+    document.for_each_element(|element| match element {
+        Element::FilledFace(face) => {
+            let polygons: Vec<Vec<Point>> = face.boundaries.iter().map(flatten).collect();
+            accumulate(&polygons, width, height, &mut total, &mut faces);
+        }
+        Element::Primitive(primitive) => {
+            if let Some(polygon) = flatten_primitive(primitive) {
+                accumulate(&[polygon], width, height, &mut total, &mut faces);
+            }
+        }
+        _ => {}
     });
 
     Coverage {
@@ -159,6 +164,44 @@ pub fn coverage(document: &VectorDocument, width: u32, height: u32) -> Coverage 
         total,
         faces,
     }
+}
+
+/// Flatten a semantic primitive for the diagnostic coverage pass.
+fn flatten_primitive(primitive: &Primitive) -> Option<Vec<Point>> {
+    // Two recognised-circle SVG arcs use 32 steps each below. Matching that
+    // tessellation here makes the seam diagnostic compare the same polygon in
+    // opposite winding, rather than measuring two different approximations of
+    // the same analytic circle.
+    const STEPS: u32 = 64;
+    let (center, rx, ry) = match primitive {
+        Primitive::Circle { center, radius, .. } => (*center, *radius, *radius),
+        Primitive::Ellipse { center, radii, .. } => (*center, radii.x, radii.y),
+        Primitive::Rect {
+            bounds,
+            corner_radius: None,
+            ..
+        } => {
+            return Some(vec![
+                Point::new(bounds.x, bounds.y),
+                Point::new(bounds.x + bounds.width, bounds.y),
+                Point::new(bounds.x + bounds.width, bounds.y + bounds.height),
+                Point::new(bounds.x, bounds.y + bounds.height),
+                Point::new(bounds.x, bounds.y),
+            ]);
+        }
+        // Rounded rectangles are not produced by this build. Refusing to
+        // approximate them keeps this diagnostic from making a false claim.
+        _ => return None,
+    };
+    let mut points = Vec::with_capacity(STEPS as usize + 1);
+    for i in 0..=STEPS {
+        let angle = f64::from(i) / f64::from(STEPS) * std::f64::consts::TAU;
+        points.push(Point::new(
+            center.x + rx * angle.cos(),
+            center.y + ry * angle.sin(),
+        ));
+    }
+    Some(points)
 }
 
 /// Flatten a chain to a polygon.
@@ -194,11 +237,14 @@ fn flatten(chain: &CurveChain) -> Vec<Point> {
                 }
                 from = to;
             }
-            PathSegment::Arc { to, .. } => {
-                // Arcs are not produced by this build. Treating one as a line
-                // would silently distort the diagnostic, so the coarse
-                // approximation is noted here rather than hidden.
-                points.push(to);
+            PathSegment::Arc {
+                radii,
+                rotation,
+                large,
+                sweep,
+                to,
+            } => {
+                flatten_arc(from, radii, rotation, large, sweep, to, &mut points);
                 from = to;
             }
             // `PathSegment` is `#[non_exhaustive]`; an unknown segment is
@@ -208,6 +254,70 @@ fn flatten(chain: &CurveChain) -> Vec<Point> {
         }
     }
     points
+}
+
+/// SVG endpoint-parameterised arc to samples, following SVG 1.1 F.6.5.
+fn flatten_arc(
+    from: Point,
+    radii: palette_tracer_core::ir::Vec2,
+    rotation: f64,
+    large: bool,
+    sweep: bool,
+    to: Point,
+    out: &mut Vec<Point>,
+) {
+    const STEPS: u32 = 32;
+    let (cos_phi, sin_phi) = (rotation.cos(), rotation.sin());
+    let dx = (from.x - to.x) * 0.5;
+    let dy = (from.y - to.y) * 0.5;
+    let xp = cos_phi * dx + sin_phi * dy;
+    let yp = -sin_phi * dx + cos_phi * dy;
+    let mut rx = radii.x.abs();
+    let mut ry = radii.y.abs();
+    if rx <= f64::EPSILON || ry <= f64::EPSILON {
+        out.push(to);
+        return;
+    }
+    let lambda = xp * xp / (rx * rx) + yp * yp / (ry * ry);
+    if lambda > 1.0 {
+        let scale = lambda.sqrt();
+        rx *= scale;
+        ry *= scale;
+    }
+    let numerator = (rx * rx * ry * ry - rx * rx * yp * yp - ry * ry * xp * xp).max(0.0);
+    let denominator = rx * rx * yp * yp + ry * ry * xp * xp;
+    let sign = if large == sweep { -1.0 } else { 1.0 };
+    let coefficient = if denominator <= f64::EPSILON {
+        0.0
+    } else {
+        sign * (numerator / denominator).sqrt()
+    };
+    let cxp = coefficient * rx * yp / ry;
+    let cyp = -coefficient * ry * xp / rx;
+    let center = Point::new(
+        cos_phi * cxp - sin_phi * cyp + (from.x + to.x) * 0.5,
+        sin_phi * cxp + cos_phi * cyp + (from.y + to.y) * 0.5,
+    );
+    let ux = (xp - cxp) / rx;
+    let uy = (yp - cyp) / ry;
+    let vx = (-xp - cxp) / rx;
+    let vy = (-yp - cyp) / ry;
+    let start = uy.atan2(ux);
+    let mut delta = (ux * vy - uy * vx).atan2(ux * vx + uy * vy);
+    if sweep && delta < 0.0 {
+        delta += std::f64::consts::TAU;
+    } else if !sweep && delta > 0.0 {
+        delta -= std::f64::consts::TAU;
+    }
+    for i in 1..=STEPS {
+        let angle = start + delta * f64::from(i) / f64::from(STEPS);
+        let x = rx * angle.cos();
+        let y = ry * angle.sin();
+        out.push(Point::new(
+            center.x + cos_phi * x - sin_phi * y,
+            center.y + sin_phi * x + cos_phi * y,
+        ));
+    }
 }
 
 /// Accumulate one face's coverage by supersampling with the non-zero rule.

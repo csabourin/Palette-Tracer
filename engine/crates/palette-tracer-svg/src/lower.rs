@@ -24,9 +24,11 @@
 
 use palette_tracer_core::config::{EffectiveConfig, GeometryMode, Profile};
 use palette_tracer_core::ir::{
-    Color, CurveChain, DocumentProvenance, Element, FillRule, FilledFace, Layer, Paint,
-    PathSegment, Point, Rect, StrokePath, Topology, VectorDocument,
+    Color, CurveChain, DocumentProvenance, EdgeId, Element, FillRule, FilledFace, Layer, Paint,
+    PathSegment, Point, Primitive, PrimitiveGeometry, PrimitiveRecognition, Rect, StrokePath,
+    Topology, Vec2, VectorDocument,
 };
+use std::collections::BTreeMap;
 
 /// How a coloring-book stroke is styled.
 ///
@@ -67,10 +69,28 @@ pub fn lower(
     width: u32,
     height: u32,
 ) -> VectorDocument {
+    lower_with_primitives(topology, paints, config, width, height, &[])
+}
+
+/// Lower a topology while preserving accepted §11.7 primitive semantics.
+///
+/// `recognitions` must be in face order, as produced by
+/// `palette-tracer-geometry`. A recognition is still refused here when the
+/// fitted generic chain is already compact. Every other face traversing the
+/// same edge receives exact circular arcs, preserving shared neighbours.
+#[must_use]
+pub fn lower_with_primitives(
+    topology: &Topology,
+    paints: &[Paint],
+    config: &EffectiveConfig,
+    width: u32,
+    height: u32,
+    recognitions: &[PrimitiveRecognition],
+) -> VectorDocument {
     let layers = match config.profile {
         // §3: printable outlines. Every visible interface drawn once.
         Profile::ColoringBook => vec![outline_layer(topology, OutlineStyle::default())],
-        _ => vec![fill_layer(topology, paints, config)],
+        _ => vec![fill_layer(topology, paints, config, recognitions)],
     };
 
     VectorDocument {
@@ -91,8 +111,25 @@ pub fn lower(
 }
 
 /// One filled path per interior face, in face-identifier order.
-fn fill_layer(topology: &Topology, paints: &[Paint], config: &EffectiveConfig) -> Layer {
+fn fill_layer(
+    topology: &Topology,
+    paints: &[Paint],
+    config: &EffectiveConfig,
+    recognitions: &[PrimitiveRecognition],
+) -> Layer {
     let mut elements = Vec::new();
+    let accepted: Vec<&PrimitiveRecognition> = recognitions
+        .iter()
+        .filter(|recognition| recognition_reduces_complexity(topology, recognition))
+        .collect();
+    let by_edge: BTreeMap<EdgeId, &PrimitiveRecognition> = accepted
+        .iter()
+        .map(|&recognition| (recognition.source_edge, recognition))
+        .collect();
+    let by_face: BTreeMap<_, _> = accepted
+        .iter()
+        .map(|&recognition| (recognition.face, recognition))
+        .collect();
 
     for face in &topology.faces {
         if face.exterior {
@@ -110,9 +147,14 @@ fn fill_layer(topology: &Topology, paints: &[Paint], config: &EffectiveConfig) -
             continue;
         }
 
+        if let Some(recognition) = by_face.get(&face.id) {
+            elements.push(Element::Primitive(lower_primitive(&paint, recognition)));
+            continue;
+        }
+
         let mut boundaries = Vec::with_capacity(face.cycles.len());
         for cycle in &face.cycles {
-            boundaries.push(assemble_cycle(topology, cycle.start));
+            boundaries.push(assemble_cycle(topology, cycle.start, &by_edge));
         }
 
         elements.push(Element::FilledFace(FilledFace {
@@ -137,6 +179,37 @@ fn fill_layer(topology: &Topology, paints: &[Paint], config: &EffectiveConfig) -
         }
         .to_owned(),
         elements,
+    }
+}
+
+/// Apply the gates that depend on fitted geometry and paint.
+fn recognition_reduces_complexity(topology: &Topology, recognition: &PrimitiveRecognition) -> bool {
+    let Some(edge) = topology.edges.get(recognition.source_edge.index()) else {
+        return false;
+    };
+    let Some(chain) = topology.chains.get(edge.geometry.index()) else {
+        return false;
+    };
+    // One primitive must replace enough generic structure to be a material
+    // description-complexity reduction (PTE-GEO-010).
+    if chain.segments.len() < 4 {
+        return false;
+    }
+    if edge.left_face != recognition.face && edge.right_face != recognition.face {
+        return false;
+    }
+
+    true
+}
+
+fn lower_primitive(paint: &Paint, recognition: &PrimitiveRecognition) -> Primitive {
+    match recognition.geometry {
+        PrimitiveGeometry::Circle { center, radius } => Primitive::Circle {
+            face: recognition.face,
+            center,
+            radius,
+            paint: paint.clone(),
+        },
     }
 }
 
@@ -185,12 +258,20 @@ fn outline_layer(topology: &Topology, style: OutlineStyle) -> Layer {
 }
 
 /// Concatenate a cycle's oriented chains into one closed chain.
-fn assemble_cycle(topology: &Topology, start: palette_tracer_core::ir::HalfEdgeId) -> CurveChain {
+fn assemble_cycle(
+    topology: &Topology,
+    start: palette_tracer_core::ir::HalfEdgeId,
+    primitives: &BTreeMap<EdgeId, &PrimitiveRecognition>,
+) -> CurveChain {
     let walk = topology.walk_cycle(start);
     let mut out: Option<CurveChain> = None;
 
     for half_edge in walk {
-        let piece = topology.oriented_chain(half_edge);
+        let he = &topology.half_edges[half_edge.index()];
+        let piece = primitives.get(&he.edge).map_or_else(
+            || topology.oriented_chain(half_edge),
+            |recognition| circle_boundary(recognition, he.forward),
+        );
         match &mut out {
             None => out = Some(piece),
             Some(chain) => {
@@ -205,10 +286,43 @@ fn assemble_cycle(topology: &Topology, start: palette_tracer_core::ir::HalfEdgeI
     out.unwrap_or_else(|| CurveChain::new(Point::ORIGIN))
 }
 
+/// The exact same circle expressed as two SVG arcs for a neighbouring generic
+/// face. Using the recognition record rather than refitting is what preserves
+/// the shared boundary when one face becomes a semantic `<circle>`.
+fn circle_boundary(recognition: &PrimitiveRecognition, forward: bool) -> CurveChain {
+    let PrimitiveGeometry::Circle { center, radius } = recognition.geometry;
+    let right = Point::new(center.x + radius, center.y);
+    let left = Point::new(center.x - radius, center.y);
+    let sweep = if forward {
+        recognition.source_sweep
+    } else {
+        !recognition.source_sweep
+    };
+    CurveChain {
+        start: right,
+        segments: vec![
+            PathSegment::Arc {
+                radii: Vec2::new(radius, radius),
+                rotation: 0.0,
+                large: false,
+                sweep,
+                to: left,
+            },
+            PathSegment::Arc {
+                radii: Vec2::new(radius, radius),
+                rotation: 0.0,
+                large: false,
+                sweep,
+                to: right,
+            },
+        ],
+    }
+}
+
 /// Total nodes in a document, for the §26.7 complexity report.
 #[must_use]
-pub fn count_segments(document: &VectorDocument) -> (u32, u32, u32, u32) {
-    let (mut lines, mut cubics, mut arcs, mut points) = (0, 0, 0, 0);
+pub fn count_segments(document: &VectorDocument) -> (u32, u32, u32, u32, u32) {
+    let (mut lines, mut cubics, mut arcs, mut primitives, mut points) = (0, 0, 0, 0, 0);
     let mut tally = |chain: &CurveChain| {
         points += chain.control_point_count();
         for segment in &chain.segments {
@@ -225,10 +339,11 @@ pub fn count_segments(document: &VectorDocument) -> (u32, u32, u32, u32) {
     document.for_each_element(|element| match element {
         Element::FilledFace(f) => f.boundaries.iter().for_each(&mut tally),
         Element::Stroke(s) => tally(&s.geometry),
-        Element::Primitive(_) | Element::Group(_) => {}
+        Element::Primitive(_) => primitives += 1,
+        Element::Group(_) => {}
         _ => {}
     });
-    (lines, cubics, arcs, points)
+    (lines, cubics, arcs, primitives, points)
 }
 
 #[cfg(test)]
@@ -418,10 +533,11 @@ mod tests {
         let t = square_topology();
         let paints = vec![Paint::Solid(Color::BLACK)];
         let doc = lower(&t, &paints, &config(Profile::FlatIllustration), 2, 2);
-        let (lines, cubics, arcs, points) = count_segments(&doc);
+        let (lines, cubics, arcs, primitives, points) = count_segments(&doc);
         assert_eq!(lines, 4);
         assert_eq!(cubics, 0);
         assert_eq!(arcs, 0);
+        assert_eq!(primitives, 0);
         assert_eq!(points, 5);
     }
 

@@ -31,7 +31,7 @@
 use palette_tracer_core::config::{BoundarySource, EffectiveConfig, Precision, Profile};
 use palette_tracer_core::error::ValidationError;
 use palette_tracer_core::ir::{
-    CurveChain, Element, FillRule, Paint, PathSegment, Point, VectorDocument,
+    CurveChain, Element, FillRule, Paint, PathSegment, Point, Primitive, VectorDocument,
 };
 
 /// Largest precision the search will consider.
@@ -140,13 +140,13 @@ pub fn choose_serialization_precision(
 // with a tolerance would report a collapse that did not happen.
 #[allow(clippy::float_cmp)]
 fn precision_is_safe(document: &VectorDocument, decimals: u8, budget: f64) -> bool {
-    let mut safe = true;
+    let safe = std::cell::Cell::new(true);
     let mut check_chain = |chain: &CurveChain| {
         let mut previous: Option<Point> = None;
         let mut visit = |p: Point| {
             let rounded = Point::new(round_to(p.x, decimals), round_to(p.y, decimals));
             if (rounded.x - p.x).abs() > budget || (rounded.y - p.y).abs() > budget {
-                safe = false;
+                safe.set(false);
             }
             // Two distinct consecutive points must not collapse: that would
             // delete a segment, which is a topology change (PTE-TOPO-014).
@@ -156,7 +156,7 @@ fn precision_is_safe(document: &VectorDocument, decimals: u8, budget: f64) -> bo
                 let was_distinct = prev.x != p.x || prev.y != p.y;
                 let still_distinct = prev_rounded.x != rounded.x || prev_rounded.y != rounded.y;
                 if was_distinct && !still_distinct {
-                    safe = false;
+                    safe.set(false);
                 }
             }
             previous = Some(p);
@@ -170,10 +170,42 @@ fn precision_is_safe(document: &VectorDocument, decimals: u8, budget: f64) -> bo
     document.for_each_element(|element| match element {
         Element::FilledFace(f) => f.boundaries.iter().for_each(&mut check_chain),
         Element::Stroke(s) => check_chain(&s.geometry),
-        Element::Primitive(_) | Element::Group(_) => {}
+        Element::Primitive(primitive) => {
+            let check = |value: f64| {
+                if (round_to(value, decimals) - value).abs() > budget {
+                    safe.set(false);
+                }
+            };
+            match primitive {
+                Primitive::Rect {
+                    bounds,
+                    corner_radius,
+                    ..
+                } => {
+                    for value in [bounds.x, bounds.y, bounds.width, bounds.height] {
+                        check(value);
+                    }
+                    if let Some(radius) = corner_radius {
+                        check(*radius);
+                    }
+                }
+                Primitive::Ellipse { center, radii, .. } => {
+                    for value in [center.x, center.y, radii.x, radii.y] {
+                        check(value);
+                    }
+                }
+                Primitive::Circle { center, radius, .. } => {
+                    for value in [center.x, center.y, *radius] {
+                        check(value);
+                    }
+                }
+                _ => safe.set(false),
+            }
+        }
+        Element::Group(_) => {}
         _ => {}
     });
-    safe
+    safe.get()
 }
 
 /// Escape text for XML content and attribute values (PTE-SEC-001).
@@ -407,7 +439,65 @@ fn write_element(
             write_path_data(out, &stroke.geometry, decimals, stroke.closed);
             out.push_str(&format!("\"/>{newline}"));
         }
-        Element::Primitive(_) => {}
+        Element::Primitive(primitive) => match primitive {
+            Primitive::Rect {
+                face,
+                bounds,
+                corner_radius,
+                paint,
+            } => {
+                out.push_str(indent);
+                out.push_str(&format!(
+                    "<rect id=\"face-{}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"",
+                    face.0,
+                    format_coordinate(bounds.x, decimals),
+                    format_coordinate(bounds.y, decimals),
+                    format_coordinate(bounds.width, decimals),
+                    format_coordinate(bounds.height, decimals)
+                ));
+                if let Some(radius) = corner_radius {
+                    out.push_str(&format!(" rx=\"{}\"", format_coordinate(*radius, decimals)));
+                }
+                write_paint_attributes(out, paint, false);
+                out.push_str(&format!("/>{newline}"));
+            }
+            Primitive::Ellipse {
+                face,
+                center,
+                radii,
+                paint,
+            } => {
+                out.push_str(indent);
+                out.push_str(&format!(
+                    "<ellipse id=\"face-{}\" cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"",
+                    face.0,
+                    format_coordinate(center.x, decimals),
+                    format_coordinate(center.y, decimals),
+                    format_coordinate(radii.x, decimals),
+                    format_coordinate(radii.y, decimals)
+                ));
+                write_paint_attributes(out, paint, false);
+                out.push_str(&format!("/>{newline}"));
+            }
+            Primitive::Circle {
+                face,
+                center,
+                radius,
+                paint,
+            } => {
+                out.push_str(indent);
+                out.push_str(&format!(
+                    "<circle id=\"face-{}\" cx=\"{}\" cy=\"{}\" r=\"{}\"",
+                    face.0,
+                    format_coordinate(center.x, decimals),
+                    format_coordinate(center.y, decimals),
+                    format_coordinate(*radius, decimals)
+                ));
+                write_paint_attributes(out, paint, false);
+                out.push_str(&format!("/>{newline}"));
+            }
+            _ => {}
+        },
         Element::Group(group) => {
             out.push_str(indent);
             out.push_str(&format!("<g id=\"{}\"", escape_xml(&group.id)));

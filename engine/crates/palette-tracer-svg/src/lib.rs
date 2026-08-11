@@ -15,7 +15,7 @@ pub mod lower;
 pub mod raster;
 pub mod writer;
 
-pub use lower::{OutlineStyle, count_segments, lower};
+pub use lower::{OutlineStyle, count_segments, lower, lower_with_primitives};
 pub use raster::{Coverage, coverage};
 pub use writer::{
     choose_precision, choose_serialization_precision, escape_xml, format_coordinate, serialize,

@@ -40,16 +40,15 @@
 //! # What it does not
 //!
 //! Multi-colour junctions are optimised once as shared vertices, using §10.4's
-//! barycentric evidence and PTE-TOPO-013's legality guards. Arcs (§11.4),
-//! primitive recognition (§11.7), strokes (§13), gradients (§14) and
-//! fabrication (§16) are **not** implemented, and anything that would need
-//! them is refused by name at configuration time rather than silently
-//! approximated (PTE-NO-042). `docs/IMPLEMENTATION_STATUS.md` is the authority
-//! on what is and is not built.
+//! barycentric evidence and PTE-TOPO-013's legality guards. Complete circles
+//! can remain semantic through SVG lowering (§11.7). Generic arcs (§11.4), the
+//! other primitive families, strokes (§13), gradients (§14) and fabrication
+//! (§16) are **not** implemented; unsupported requests are refused by name
+//! rather than silently approximated (PTE-NO-042).
 
 use palette_tracer_color::{Palette, PaletteEntry};
 use palette_tracer_core::config::{
-    BackgroundPolicy, EffectiveConfig, PaletteMode, PixelArtMode, Profile,
+    BackgroundPolicy, EffectiveConfig, Modifier, PaletteMode, PixelArtMode, Profile,
 };
 use palette_tracer_core::control::{ProgressEvent, Stage, TraceControl};
 use palette_tracer_core::digest::digest_document;
@@ -80,6 +79,8 @@ pub use palette_tracer_core::{ImageView as Pixels, TraceError as Error};
 pub struct Capabilities {
     /// Whether §11 curve fitting is available.
     pub curves: bool,
+    /// Whether §11.7 semantic circle recognition is available.
+    pub primitives: bool,
     /// Whether §13 stroke reconstruction is available.
     pub strokes: bool,
     /// Whether §14 gradient reconstruction is available.
@@ -93,7 +94,7 @@ pub struct Capabilities {
 /// Reported under `unimplemented` on every trace, so a caller learns what the
 /// engine did *not* do rather than inferring it from silence (§0.2).
 pub const UNIMPLEMENTED: &[&str] = &[
-    "PTE-GEO-010/011 (§11.7 primitive recognition)",
+    "§11.7 rectangle, ellipse, rounded-rectangle and polygon recognition; circles only",
     "the §11.4 circular arc model; lines and cubics only",
     "PTE-GEO-015..021 (§12 logo and lettering regularization)",
     "PTE-STROKE-001..009 (§13 centrelines and widths)",
@@ -171,10 +172,11 @@ impl Engine {
     pub fn new() -> Self {
         Self {
             capabilities: Capabilities {
-                // §11 line and cubic fitting with bidirectional validation.
-                // Arcs (§11.4) and primitive recognition (§11.7) are not
-                // included, and `UNIMPLEMENTED` names both.
+                // §11 line and cubic fitting with bidirectional validation,
+                // plus complete-circle recognition. Arcs (§11.4) and the
+                // remaining primitive families stay named in `UNIMPLEMENTED`.
                 curves: true,
+                primitives: true,
                 strokes: false,
                 gradients: false,
                 fabrication: false,
@@ -392,6 +394,33 @@ impl Engine {
         // (PTE-GEO-012, PTE-AA-008).
         budget.enter(Stage::Fit);
         control.progress(ProgressEvent::StageStarted { stage: Stage::Fit });
+        // §11.7 reads the reconstructed source samples before the generic
+        // fitter replaces them. The result stays semantic until SVG lowering
+        // (PTE-GEO-011); recognition itself never mutates shared topology.
+        let primitive_stats = if config.profile == Profile::Logo
+            || config.modifiers.contains(&Modifier::RecognizePrimitives)
+        {
+            palette_tracer_geometry::recognize_primitives(
+                &extraction.topology,
+                palette_tracer_geometry::PrimitiveOptions {
+                    tolerance_px: config.geometry.curve_tolerance_px,
+                },
+                budget,
+                control,
+            )?
+        } else {
+            palette_tracer_geometry::PrimitiveStats::default()
+        };
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Fit,
+            name: "primitive_candidates",
+            value: primitive_stats.candidates_evaluated,
+        });
+        control.progress(ProgressEvent::Counted {
+            stage: Stage::Fit,
+            name: "circle_primitives_accepted",
+            value: u64::from(primitive_stats.circles_accepted),
+        });
         let fit = palette_tracer_geometry::fit_topology(
             &mut extraction.topology,
             &fit_options(config),
@@ -408,18 +437,19 @@ impl Engine {
         let paints = self.paints(analysis, segmentation, config, &mut warnings);
 
         budget.enter(Stage::Serialize);
-        let mut document = palette_tracer_svg::lower(
+        let mut document = palette_tracer_svg::lower_with_primitives(
             &extraction.topology,
             &paints,
             config,
             image.width(),
             image.height(),
+            &primitive_stats.recognitions,
         );
         config
             .resources
             .check_output_elements(document.element_count())?;
 
-        let features: Vec<&str> = Vec::new();
+        let features: Vec<&str> = vec!["circle-primitives-v1"];
         let fallbacks: Vec<Fallback> = Vec::new();
         let digest = digest_document(
             &document,
@@ -659,7 +689,8 @@ impl Engine {
         fallbacks: Vec<Fallback>,
         digest: &str,
     ) -> TraceReport {
-        let (lines, cubics, arcs, control_points) = palette_tracer_svg::count_segments(document);
+        let (lines, cubics, arcs, primitives, control_points) =
+            palette_tracer_svg::count_segments(document);
 
         if analysis.unclaimed_pixels > 0 {
             warnings.push(
@@ -814,11 +845,11 @@ impl Engine {
                 unassigned_pixels: 0,
             },
             representation: RepresentationReport {
-                paths: document.element_count() as u32,
+                paths: (document.element_count() as u32).saturating_sub(primitives),
                 lines,
                 cubics,
                 arcs,
-                primitives: 0,
+                primitives,
                 strokes: 0,
                 gradients: 0,
                 gradient_stops: 0,

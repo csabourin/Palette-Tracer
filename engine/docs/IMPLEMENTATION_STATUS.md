@@ -3,8 +3,8 @@
 `engine/SPEC.md` is authoritative. This document records evidence; it does not
 redefine requirements.
 
-**Assessed at:** 2026-08-11, after the junction-pass QA fixes.
-**Measured with:** `cargo test --workspace` → **410 passed, 0 failed**;
+**Assessed at:** 2026-08-11, after complete-circle primitive recognition.
+**Measured with:** `cargo test --workspace` → **417 tests and 2 doctests passed**;
 `cargo clippy --workspace --all-targets -- -D warnings` → clean;
 `cargo fmt --check` → clean;
 `cargo check --workspace --target wasm32-unknown-unknown` → clean;
@@ -41,11 +41,21 @@ PAM with `tools/png_to_ppm.py`:
 
 ```
 pte: 5 faces, 10 shared edges, 3353 bytes,
-     digest pte-semantic-v1-blake3:87c7afc66d7bbd7b979eb8bc3a89fb42f283543160d9ef5d4381381b755418f4
+     digest pte-semantic-v1-blake3:af0978c0927d5dfd8adb3671d44ce1d12386fa5c5d3718190df0322bce3b6537
 ```
 
 with an automatic five-colour palette, one hole recovered, zero exposed seam
 pixels, and 184 lines plus 68 cubics.
+
+**A passing complete circle can remain a circle.** §11.7's first vertical
+slice recognises one fully supported closed circular boundary before generic
+fitting and carries `Primitive::Circle` through the typed document, semantic
+digest and `<circle>` SVG. An opaque neighbouring face traverses the same
+analytic boundary as two exact arcs, so primitive editability does not trade
+away shared topology. Recognition is automatic in `logo` and available through
+`recognize-primitives`; every candidate still has to pass the resolved
+displacement bound. Other primitive families and the generic §11.4 arc
+candidate remain absent.
 
 **Boundary evidence is now subpixel where the input carries it.** §10.3–§10.5
 are implemented: the compositing transfer is estimated from the evidence,
@@ -74,8 +84,8 @@ segments.
 | Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 13-fixture synthetic corpus with manifests (`tools/make_fixtures.py`); `cargo deny` wired to `make engine-deny` | No **real-world** corpus; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
 | Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 70 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
 | Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 28 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
-| Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 30 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`, junction topology in `crates/palette-tracer/tests/junction_topology.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners, DP segmentation: `palette-tracer-geometry`, 48 tests, `docs/notes/curve-fitting.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; §11.7 primitives (PTE-GEO-010/011) |
-| Phase 4 — logo, illustration, fabrication | Not implemented | — | §11.7, §12, §16 |
+| Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 30 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`, junction topology in `crates/palette-tracer/tests/junction_topology.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners and DP segmentation, plus complete-circle recognition: `palette-tracer-geometry`, 53 tests, `docs/notes/curve-fitting.md`, `docs/notes/primitive-recognition.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; non-circular §11.7 primitives |
+| Phase 4 — logo, illustration, fabrication | Partly conforming | Complete circles in `logo`, with a typed primitive and shared-neighbour lowering | Remaining §11.7 families, §12, §16 |
 | Phase 5 — lines, lettering, coloring books | Partly | `coloring-book` emits each interface once (§13.6) | All of §13.1–§13.5 |
 | Phase 6 — standard gradients | Not implemented | — | All of §14 |
 | Phase 7 — hardening and 1.0 | Not started | — | Fuzzing, cross-renderer matrix, published budgets |
@@ -90,7 +100,7 @@ the order the remaining ones should be taken in.
 
 | Requirement | Status | Implementation | Validation |
 |---|---|---|---|
-| PTE-GOAL-001/002/003 | conforming | The whole pipeline | `conformance_gates.rs`, 11 tests |
+| PTE-GOAL-001/002/003 | conforming | The whole pipeline | `conformance_gates.rs`, 12 tests |
 | PTE-GOAL-004 | conforming | §10 reconstruction feeding §11 fitting | `crates/palette-tracer/tests/subpixel_gates.rs`, 5 tests: all six of §31.2's gates measured and met on the analytic circles, including `reconstruction_beats_what_the_grid_alone_can_express` |
 | PTE-GOAL-005 | **not implemented** | — | §13 is absent |
 | PTE-GOAL-006 | partly | 4 of 11 profiles | `unimplemented_profiles_are_refused_not_silently_downgraded` |
@@ -104,7 +114,7 @@ the order the remaining ones should be taken in.
 | PTE-API-007/008/009 | conforming | `Finite`, `deny_unknown_fields`, `Resolver` | `an_unknown_key_is_refused`, `provenance_distinguishes_user_from_profile` |
 | PTE-API-010/011 | conforming | Identifiers from raster order; `f64` throughout | `labels_are_numbered_by_raster_position_not_allocation_order` |
 | PTE-API-012 | conforming | Stable codes on every warning and error | `codes_are_category_prefixed_and_stable` |
-| PTE-API-013/014/015 | conforming | `pte` stream discipline and source-based flag precedence, independent of token order | `crates/palette-tracer-cli/tests/cli.rs`, 23 tests against the real binary, including `a_profile_flag_before_the_config_file_still_wins` and the existing stream-collision gate |
+| PTE-API-013/014/015 | conforming | `pte` stream discipline and source-based flag precedence, independent of token order | `crates/palette-tracer-cli/tests/cli.rs`, 24 tests against the real binary, including `a_profile_flag_before_the_config_file_still_wins` and the existing stream-collision gate |
 | PTE-API-017..022 | partly | `TraceSession` with Appendix E.1 keys, `dispose` | `precision_reuses_the_caches_and_reach_does_not`; no JS binding exists |
 | PTE-COLOR-001..004 | conforming | `color::spaces` | Published OKLab reference vectors; `ΔE_OK` convention declared |
 | PTE-COLOR-005 | conforming | Reported as `assumed-srgb` | `the_report_has_the_appendix_a_top_level_keys` |
@@ -133,8 +143,9 @@ the order the remaining ones should be taken in.
 | PTE-AA-006 | conforming | §10.4 barycentric weights gate and weight one shared junction solve; they never override topology constraints, and the intersection gate is scale-free so weak nearly parallel evidence cannot buy a position | `three_colour_barycentric_weights_are_recovered`, `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `a_four_colour_junction_is_reconstructed_as_one_shared_vertex`, `nearly_parallel_junction_evidence_is_refused` |
 | PTE-AA-007/008 | conforming | Hard trust region of one pixel; the per-chain solve pins endpoints; the joint pass updates one vertex and all incident shared chains exactly once | `no_sample_leaves_its_trust_region`, `the_per_chain_solve_does_not_move_endpoints`, `a_multicolour_junction_is_optimized_once_and_shared_exactly`, `fitting_changes_only_the_chains` |
 | PTE-AA-009 | conforming | The report censuses each edge's actual evidence class, and `geometry.evidence_is_the_pixel_grid` is emitted from that census with its count rather than unconditionally. `pixel-art`, which never runs §10, says so in its own words | `make engine-corpus`; `boundary_source_census`; `the_report_names_what_is_not_implemented`, `pixel_art_does_not_claim_coverage_reconstruction_ran` |
-| PTE-GEO-001..009 | conforming | `palette-tracer-geometry`: preparation, multi-scale corners with hysteresis, line and cubic models, bidirectional error, DP segmentation | 48 tests. `a_forty_five_degree_staircase_has_no_corners` (PTE-GEO-002), `a_ballooning_cubic_is_rejected_though_it_passes_through_the_samples` (§11.5), `the_chord_bound_is_never_exceeded_by_the_real_curve` (PTE-GEO-007), `exhausting_the_candidate_budget_falls_back_to_the_polyline` (PTE-GEO-005) |
-| PTE-GEO-010/011 | **not implemented** | — | §11.7 primitive recognition; a circle is cubics, not a circle |
+| PTE-GEO-001..009 | conforming | `palette-tracer-geometry`: preparation, multi-scale corners with hysteresis, line and cubic models, bidirectional error, DP segmentation | 53 geometry tests in total. `a_forty_five_degree_staircase_has_no_corners` (PTE-GEO-002), `a_ballooning_cubic_is_rejected_though_it_passes_through_the_samples` (§11.5), `the_chord_bound_is_never_exceeded_by_the_real_curve` (PTE-GEO-007), `exhausting_the_candidate_budget_falls_back_to_the_polyline` (PTE-GEO-005) |
+| PTE-GEO-010 | **partly conforming** | Complete-circle recognizer: full-support, radial residual/max displacement, topology and material-complexity gates; work is linear apart from the residual sort and charged to the global budget | `a_complete_circle_is_recovered_in_source_coordinates`, `a_partial_arc_is_not_misrepresented_as_a_complete_circle`, `a_square_fails_the_radial_displacement_gate`, `primitive_recognition_charges_the_work_budget`, `the_real_extractor_emits_a_semantic_circle`; rectangles, ellipses, rounded rectangles, polygons and repeated radii remain absent |
+| PTE-GEO-011 | conforming | `PrimitiveRecognition` remains typed across fitting/lowering; `Primitive::Circle` is hashed semantically and emitted as `<circle>`. An opaque neighbour gets the same circle as exact arcs | `the_real_extractor_emits_a_semantic_circle`, `the_opaque_neighbour_reuses_the_exact_circle_as_arcs`, `recognizing_a_reversed_circle_is_semantically_equivalent`; `docs/notes/primitive-recognition.md` |
 | PTE-GEO-012/013/014 | conforming | One chain per shared edge, fitted once; endpoints are junctions by construction; the validator reruns after fitting | `fitting_changes_only_the_chains`, `fitting_never_moves_a_chain_endpoint`, `fitting_a_reversed_chain_gives_the_reversed_fit_exactly` |
 | PTE-STROKE-010/011/012 | conforming | Interfaces emitted from shared edges | `no_coloring_book_interface_is_emitted_twice` |
 | PTE-STROKE-001..009 | **not implemented** | — | No centrelines |
@@ -265,10 +276,11 @@ These are the things a reader would otherwise have to discover.
    the samples off the ideal diagonal are still `1/√2 ≈ 0.707` px from the
    chord joining the ones on it, so a tolerance below that still splits a
    boundary that is "really" one line.
-3. **No primitives and no arcs.** §11.7 is not implemented, so a circle is a
-   handful of cubics rather than a circle, and PTE-GEO-011's "recognized
-   primitives MUST remain represented semantically in the IR" has nothing to
-   represent. `geometry.allowArcs` is refused by name.
+3. **Primitive recognition is circle-only; generic arcs are absent.** A
+   sufficiently supported complete circle can remain semantic through SVG
+   lowering. Rectangles, ellipses, rounded rectangles, polygons, repeated
+   radii and §11.4's partial-arc candidate remain unimplemented;
+   `geometry.allowArcs` is still refused by name.
 4. **No independent renderer.** The seam gate uses a first-party rasteriser over
    the typed IR. §18.7's compatibility matrix (`resvg`, Chromium, Firefox,
    Inkscape, a fabrication importer) is **not satisfied**, and no claim of

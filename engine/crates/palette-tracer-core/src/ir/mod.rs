@@ -19,7 +19,7 @@ pub mod topology;
 
 pub use document::{
     Definition, DocumentProvenance, Element, FillRule, FilledFace, Group, Layer, PhysicalSize,
-    Primitive, StrokePath, VectorDocument,
+    Primitive, PrimitiveGeometry, PrimitiveRecognition, StrokePath, VectorDocument,
 };
 pub use geom::{CurveChain, PathSegment, Point, Rect, Vec2};
 pub use paint::{Color, GradientStop, LinearGradient, Paint, RadialGradient, SpreadMethod};
