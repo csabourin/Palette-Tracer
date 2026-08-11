@@ -4,7 +4,7 @@ This file tells a coding agent how to work in this repository. It is not the spe
 
 **`SPEC.md` is the authoritative implementation contract.** This file never restates, summarizes or overrides it. Where the two appear to conflict, `SPEC.md` wins and this file is wrong.
 
-**Except under `engine/`.** That directory holds the Palette Tracer Engine, a separate Rust project with its own specification (`engine/SPEC.md`), its own contributor contract (`engine/AGENTS.md`) and its own licence (`MIT OR Apache-2.0`). Neither this file nor the root `SPEC.md` applies there. The two specifications use disjoint requirement identifiers -- `PTE-TOPO-004` in the engine, `§20.3` here -- so a citation always says which contract it means. The engine is not wired into the Python pipeline; see `engine/docs/IMPLEMENTATION_STATUS.md`.
+**Except under `engine/`.** That directory holds the Palette Tracer Engine, a separate Rust project with its own specification (`engine/SPEC.md`), its own contributor contract (`engine/AGENTS.md`) and its own MIT licence. Neither this file nor the root `SPEC.md` applies there. The two specifications use disjoint requirement identifiers -- `PTE-TOPO-004` in the engine, `§20.3` here -- so a citation always says which contract it means. The engine is not wired into the Python pipeline; see `engine/docs/IMPLEMENTATION_STATUS.md`.
 
 ---
 

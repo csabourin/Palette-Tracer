@@ -15,7 +15,7 @@ allow = [
     # `arrayref`, reached through `blake3`, is BSD-2-Clause and only that: it
     # offers no dual licence to fall back on. Two clauses, both satisfied by the
     # attribution `THIRD_PARTY_NOTICES.md` already carries, and no patent or
-    # copyleft term. Compatible with both halves of `MIT OR Apache-2.0`.
+    # copyleft term. Compatible with distribution in the MIT engine.
     "BSD-2-Clause",
     "CC0-1.0",
     "MIT",

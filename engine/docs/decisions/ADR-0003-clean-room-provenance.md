@@ -6,7 +6,7 @@
 
 ## Context
 
-The engine is `MIT OR Apache-2.0` (ADR-0001). The Python application in the
+The engine is MIT (ADR-0004). The Python application in the
 same repository is GPL-3.0-or-later and implements overlapping ideas: OKLCH
 colour reaches, pinned palette entries, deterministic constrained
 quantisation, destination presets.
@@ -39,9 +39,13 @@ Concretely, while authoring anything under `engine/`:
 * No dependency may introduce a GPL or LGPL closure. `deny.toml` enforces the
   allowlist and `cargo deny check` is release-blocking.
 
-The one permitted contact between the trees is documentation: the root
-`README.md` and `SPEC.md` each carry a pointer to `engine/`, and this ADR
-describes the Python side from its published specification, not its source.
+Before an integration adapter exists, the only contact between the trees is
+documentation: the root `README.md` and `SPEC.md` each carry a pointer to
+`engine/`, and this ADR describes the Python side from its published
+specification, not its source. A future adapter may live on the GPL side and
+call the engine's public interface. That runtime dependency does not permit the
+engine implementation to read, copy, import, or call back into GPL code; the
+dependency and provenance arrows remain one-way (ADR-0004).
 
 ## Consequences
 

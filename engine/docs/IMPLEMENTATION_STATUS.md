@@ -144,7 +144,7 @@ the order the remaining ones should be taken in.
 | PTE-SEC-005/006/007 | conforming | `checked`, incremental limits | `an_adversarial_region_count_hits_the_limit_cleanly` |
 | PTE-SEC-009 | conforming | `unsafe_code = "deny"` workspace-wide | The workspace lint table |
 | PTE-DET-001..004 | conforming | Quantised keys, stable heaps, no unordered iteration in an output path | `determinism.rs`, 8 tests, plus `make engine-parity`: the same engine compiled for `wasm32-wasip1` and run under Node's V8 produces byte-identical semantic digests on all 12 fixtures. Browser-engine parity beyond V8 is still unproven |
-| PTE-LIC-001..005 | conforming | ADR-0003, `deny.toml`, `THIRD_PARTY_NOTICES.md` | `make engine-deny` → `advisories ok, bans ok, licenses ok, sources ok`. Running it for the first time found the policy failing: `arrayref` is BSD-2-Clause only, and is now admitted with a review note |
+| PTE-LIC-001..005 | conforming | MIT-only engine: ADR-0004; clean-room and one-way dependency boundary: ADR-0003; `deny.toml`, `THIRD_PARTY_NOTICES.md` | `make engine-deny` → `advisories ok, bans ok, licenses ok, sources ok`. `cargo metadata` reports the workspace packages as MIT |
 | PTE-NO-042 | conforming | Unimplemented settings refused by name with the governing requirement, now including `geometry.allowArcs` | `unimplemented_modifiers_are_refused`, `an_unimplemented_profile_is_refused_not_downgraded` |
 | PTE-TEST-003/004 | partly | 12 synthetic fixtures regenerated from analytic descriptions, with §25.2 manifests: `tools/make_fixtures.py`, `make engine-fixtures` | Synthetic only. No real-world corpus, and no multiple-resolution or rotation sweep yet |
 
@@ -298,8 +298,9 @@ These are the things a reader would otherwise have to discover.
     with the whole image.
 12. **The Python application does not use this engine.** Nothing in
     `palette_trace/` calls it, and the tracing backend registry is unchanged.
-    Wiring the two together is a separate piece of work with its own licence
-    question (the engine is permissive, the host is GPL), untouched by design.
+    The licence choice is now settled: the engine is MIT and a future adapter
+    belongs on the GPL side. Choosing and validating the integration mechanism
+    remains separate engineering work; ADR-0004 defines the boundary.
 
 ## Deliberate deviations from the specification
 
