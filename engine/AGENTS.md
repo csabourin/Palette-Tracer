@@ -25,10 +25,12 @@ cargo test --workspace                                    # 292 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 cargo check --workspace --target wasm32-unknown-unknown   # PTE-ARCH-003
+cargo deny check                                          # PTE-LIC-005
 ```
 
-From the repository root, `make engine-test`, `make engine-lint` and
-`make engine-wasm` run the same things.
+From the repository root, `make engine-test`, `make engine-lint`,
+`make engine-wasm` and `make engine-deny` run the same things. `cargo deny`
+needs `cargo install cargo-deny --locked` once.
 
 ## Rules that come from the specification
 

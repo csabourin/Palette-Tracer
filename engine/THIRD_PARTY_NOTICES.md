@@ -34,8 +34,9 @@ and must not pull a GPL or LGPL closure (PTE-LIC-003).
   unimplemented, and single-thread execution is the conformance target
   (PTE-PERF-009, PTE-NO-038).
 * **No image codec.** The core takes decoded pixels only (PTE-ARCH-001). The
-  CLI reads a minimal subset of PNG with a first-party decoder rather than
-  taking on a codec dependency; unsupported encodings return a typed decode
-  error rather than a guess.
+  CLI reads binary Netpbm (`P6`, `P7`) with a first-party decoder rather than
+  taking on a codec dependency, and refuses PNG *by name* with the reason and
+  the conversion route (`tools/png_to_ppm.py`), rather than guessing at the
+  bytes.
 * **No GPL or LGPL code, in any crate, at any depth** (PTE-LIC-002/003). See
   `docs/decisions/ADR-0003-clean-room-provenance.md`.

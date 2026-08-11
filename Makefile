@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 
 .PHONY: test test-unit test-conformance conformance phase0 verify-env install-dev web \
-	engine-test engine-lint engine-wasm engine-trace
+	engine-test engine-lint engine-wasm engine-deny engine-trace
 
 test:
 	$(PYTHON) -m pytest
@@ -46,6 +46,11 @@ engine-lint:
 # PTE-ARCH-003: every baseline algorithm compiles for wasm32 with no OS stubs.
 engine-wasm:
 	cd engine && cargo check --workspace --target wasm32-unknown-unknown
+
+# PTE-LIC-005: licence and advisory checks are release-blocking, so they need a
+# command that runs them. Requires `cargo install cargo-deny --locked`.
+engine-deny:
+	cd engine && cargo deny check
 
 # End-to-end on the repository's own sample. `pte` reads Netpbm, not PNG:
 # the core takes decoded pixels (PTE-ARCH-001) and no codec adapter is built.
