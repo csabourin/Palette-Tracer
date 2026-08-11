@@ -1,11 +1,34 @@
 # Handoff
 
 **Session date:** 2026-08-11
-**Branch:** `claude/engine-subpixel-antialias-37l6z0`
-**Working slice:** built §10, subpixel antialias reconstruction, and found on
-the way that §10's absence was *not* what the corpus census was measuring.
-Nothing under `palette_trace/` was touched, by decision — the licence question
-in the previous handoff is still open and still unanswered.
+**Branch:** `claude/engine-project-gaps-rby09i`, restarted from merged PR #18's
+`master` to resolve PR #17
+**Working slice:** reconciled the conflicting §10 implementations after PR #18
+merged, retaining its complete AA crate and salvaging the older branch's
+fixed-point fringe cleanup and subpixel-safe SVG precision. Nothing under
+`palette_trace/` was read or touched.
+
+## Merge resolution
+
+PR #18's implementation is the retained architecture: it has a separate
+`palette-tracer-aa` crate, exact square/half-plane inversion, multi-sample
+normals, confidence, bounded §10.5 optimisation, and passing analytic §31.2
+gates. The conflicting PR #17 geometry-local implementation was not merged on
+top because it is both less complete and materially worse on the same corpus
+(8/7 circle faces and 11 star faces versus PR #18's 4/3 and 2). The salvaged
+fixed-point pass then takes the final circles to the expected 2/2 faces.
+
+Two independent improvements from PR #17 were ported instead:
+
+* §8.6 fringe reassignment repeats to a deterministic fixed point, and its test
+  now requires a real reversible audit record rather than accepting an empty
+  vector;
+* automatic SVG precision reserves at most `0.05 px` of displacement when
+  subpixel reconstruction is active, and the report uses the same selector.
+
+The conformance table now records the encoded-sRGB transfer hypothesis as a
+deliberate, tested compatibility extension and marks PTE-AA-001 partly rather
+than claiming literal conformance to its linear-light fitting MUST.
 
 ## Start here: the diagnosis changed the plan
 
@@ -51,8 +74,9 @@ for 4-connected blobs.
 between topology extraction and §11 fitting:
 
 * **§10.2** — `two_color_best` estimates the compositing transfer from the
-  evidence instead of assuming it. PTE-AA-001 holds throughout: every residual
-  compared and reported is linear-light premultiplied.
+  evidence instead of assuming it. Every residual compared and reported is
+  linear-light premultiplied; the encoded-sRGB parameter fit is the deliberate
+  PTE-AA-001 compatibility deviation recorded above.
 * **§10.3** — exact piecewise analytic square/half-plane inversion, the first
   of §10.3's three options and the *cheapest*. One `sqrt`, no iteration, so the
   decision is bit-identical across targets (PTE-DET-004). Monotone and
@@ -83,8 +107,8 @@ the rasters):
 
 ```
                       faces  lines cubics  bytes        faces  lines cubics  bytes
-circle-subpixel-0         8    146     16   1917   ->       4     16      4    709
-circle-subpixel-1         9    158     22   2167   ->       3      8      6    677
+circle-subpixel-0         8    146     16   1917   ->       2      6      6    619
+circle-subpixel-1         9    158     22   2167   ->       2      6      6    625
 rounded-rectangle        14    184      4   2181   ->       2     12      8    616
 star-acute-corners       47    556     12   6160   ->       2     20     20   1104
 ```
@@ -95,7 +119,7 @@ Every other fixture is byte-identical, including `pixel-art/diagonals` and
 ## Commands run, and what they actually returned
 
 ```
-cd engine && cargo test --workspace          397 passed, 0 failed
+cd engine && cargo test --workspace          398 passed, 0 failed
 cd engine && cargo clippy --workspace --all-targets -- -D warnings   clean
 cd engine && cargo fmt --check                                       clean
 cd engine && cargo check --workspace --target wasm32-unknown-unknown clean
@@ -169,11 +193,11 @@ cheapest useful thing a next session could pick up.
 
 **§10.4's weights have nothing to consume them.** Junction positions are
 PTE-TOPO-011/012/013 and are not implemented, so §10 pins every chain endpoint.
-That is why `curves/circle-subpixel-0` is four faces rather than two: its
-remaining structure meets at junctions nothing can move. This is now the
-largest gap in §10 and the natural next slice — and unlike this session's
-starting point, the barycentric estimator it needs already exists and is
-tested.
+This remains §10's largest gap and the natural next slice — and unlike this
+session's starting point, the barycentric estimator it needs already exists and
+is tested. The analytic circles have no junctions and therefore cannot validate
+that requirement; their final 2/2 face count removes the former misleading
+attribution.
 
 After that, §11.7 primitives (a circle is still cubics, not a circle) would
 make `curves/circle-subpixel-*` say what they are, and PTE-GEO-011's "recognized

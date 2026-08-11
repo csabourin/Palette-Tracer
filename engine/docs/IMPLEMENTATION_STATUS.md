@@ -4,7 +4,7 @@
 redefine requirements.
 
 **Assessed at:** 2026-08-11, after §10 subpixel antialias reconstruction.
-**Measured with:** `cargo test --workspace` → **397 passed, 0 failed**;
+**Measured with:** `cargo test --workspace` → **398 passed, 0 failed**;
 `cargo clippy --workspace --all-targets -- -D warnings` → clean;
 `cargo fmt --check` → clean;
 `cargo check --workspace --target wasm32-unknown-unknown` → clean;
@@ -47,11 +47,13 @@ pte: 5 faces, 10 shared edges, 3353 bytes,
 with an automatic five-colour palette, one hole recovered, zero exposed seam
 pixels, and 184 lines plus 68 cubics.
 
-**Boundary evidence is now subpixel where the input carries it.** §10 is
-implemented: the compositing transfer is estimated from the evidence rather
-than assumed, coverage is inverted to a signed offset in closed form, and
-§10.5's objective moves each boundary sample along its own normal inside a
-trust region. Boundaries are reported as `coverage_reconstructed`,
+**Boundary evidence is now subpixel where the input carries it.** §10.3–§10.5
+are implemented: the compositing transfer is estimated from the evidence,
+coverage is inverted to a signed offset in closed form, and §10.5's objective
+moves each boundary sample along its own normal inside a trust region. The
+encoded-sRGB transfer hypothesis is a deliberate real-input compatibility
+extension to §10.2 and means PTE-AA-001 is only partly conforming. Boundaries
+are reported as `coverage_reconstructed`,
 `crisp_grid`, `low_confidence_fallback` or `pixel_art_policy` according to what
 actually happened to each one, and §31.2's synthetic geometry gates are
 **measured and met** — see the table below.
@@ -69,8 +71,8 @@ segments.
 |---|---|---|---|
 | Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 12-fixture synthetic corpus with manifests (`tools/make_fixtures.py`); `cargo deny` wired to `make engine-deny` | No **real-world** corpus; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
 | Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 64 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
-| Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 26 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
-| Phase 3 — subpixel boundaries and curve fitting | Conforming for §10 and §11.1–§11.6 | §10.2 transfer estimation, §10.3 closed-form coverage inversion, §10.4 normals and confidence, §10.5 bounded optimisation: `palette-tracer-aa`, 23 tests, `docs/notes/subpixel-antialias.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners, DP segmentation: `palette-tracer-geometry`, 48 tests, `docs/notes/curve-fitting.md` | §11.4 arcs; §11.7 primitives (PTE-GEO-010/011); junction optimisation (PTE-TOPO-011/012/013), which is what §10.4's barycentric weights are waiting for |
+| Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 27 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
+| Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence, §10.5 bounded optimisation: `palette-tracer-aa`, 23 tests, `docs/notes/subpixel-antialias.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners, DP segmentation: `palette-tracer-geometry`, 48 tests, `docs/notes/curve-fitting.md` | PTE-AA-001's encoded-transfer compatibility extension; PTE-AA-006 junction optimisation; §11.4 arcs; §11.7 primitives (PTE-GEO-010/011) |
 | Phase 4 — logo, illustration, fabrication | Not implemented | — | §11.7, §12, §16 |
 | Phase 5 — lines, lettering, coloring books | Partly | `coloring-book` emits each interface once (§13.6) | All of §13.1–§13.5 |
 | Phase 6 — standard gradients | Not implemented | — | All of §14 |
@@ -113,7 +115,7 @@ the order the remaining ones should be taken in.
 | PTE-SEG-001..007 | conforming | `segment::edges`, `segment::partition` | `every_pixel_is_owned_by_exactly_one_region`, `equal_code_point_steps_are_not_equal_costs` |
 | PTE-SEG-008 | conforming | Named: Felzenszwalb–Huttenlocher MSF predicate, **not** Cousty's watershed cut | Module documentation and `AlgorithmVersions` |
 | PTE-SEG-009..014 | conforming | `segment::rag` | `adjacency_is_symmetric`, `merging_is_deterministic`, `distinct_pinned_identities_never_merge` |
-| PTE-SEG-015/016 | conforming | Fringe pass before topology, with audit records that now name the compositing transfer as well. §8.7's shape veto has been removed from this gate: it is not among §8.6's four conditions, and it misfired on diagonal fringe chains, whose 8-connected perimeter over-scores `perimeter²/(16·area)` by more than twice | `an_antialias_fringe_is_absorbed_with_an_audit_record`, `an_antialiased_hairline_is_not_absorbed_because_it_is_not_a_mixture` |
+| PTE-SEG-015/016 | conforming | Fringe cleanup runs to a deterministic fixed point before topology, retaining audit records that name the compositing transfer. §8.7's shape veto is not consulted by this gate; the mixture residual protects hairlines | `an_antialias_fringe_is_absorbed_with_an_audit_record` requires a real reassignment and proves the next sweep is empty; `an_antialiased_hairline_is_not_absorbed_because_it_is_not_a_mixture` |
 | PTE-SEG-017 | **partly** | Elongation and width only | `protection_distinguishes_a_hairline_from_a_speck`. Geodesic length, repeated-pattern evidence, endpoint and junction evidence, and profile role are **not** implemented |
 | PTE-SEG-018/019 | **not implemented** | — | No tiling |
 | PTE-TOPO-001..007 | conforming | `topology::extract` | `twin_traversals_are_exact_reverses_of_one_chain`, `every_face_cycle_closes_exactly_once` |
@@ -122,7 +124,7 @@ the order the remaining ones should be taken in.
 | PTE-TOPO-014 | conforming | Precision search refuses a collapse | `precision_never_collapses_two_distinct_points` |
 | PTE-TOPO-015 | conforming | | `shared_mosaics_have_no_exposed_seam_pixels`, with the first-party rasteriser |
 | PTE-TOPO-016/017/018 | partly | Modes are distinct and recorded in the layer role | Only `shared-mosaic` is produced; `stacked` and `separate-operations` are refused |
-| PTE-AA-001/002 | conforming | `color::mixture`: the compositing transfer is estimated from the evidence, not assumed. The linear-light model stays the default and is displaced only when it visibly fails and the encoded hypothesis explains the remainder materially better; both comparisons go through `QuantKey` | `an_encoded_space_blend_is_recognised_and_its_coverage_recovered`, `the_linear_hypothesis_alone_is_biased_by_a_fifth_of_a_pixel`, `a_linear_light_blend_still_chooses_the_linear_hypothesis`, `inseparable_endpoints_have_no_estimate_in_either_space` |
+| PTE-AA-001/002 | **partly** | `color::mixture`: linear-light is the default and all residuals are judged there, but a compatibility hypothesis estimates coverage in encoded sRGB when linear fitting visibly fails. This deliberate deviation handles common raster output but is not literal PTE-AA-001 conformance | `an_encoded_space_blend_is_recognised_and_its_coverage_recovered`, `the_linear_hypothesis_alone_is_biased_by_a_fifth_of_a_pixel`, `a_linear_light_blend_still_chooses_the_linear_hypothesis`, `inseparable_endpoints_have_no_estimate_in_either_space`; `docs/notes/subpixel-antialias.md` §2 |
 | PTE-AA-003 | conforming | `aa::square`: exact piecewise analytic square/half-plane inversion, the first of §10.3's three options. One `sqrt`, no iteration, so the decision is bit-identical across targets (PTE-DET-004) | `the_inverse_recovers_the_offset_that_produced_the_coverage`, `the_inverse_is_monotone_in_every_octant`, `reversing_the_labels_mirrors_the_offset`, all over every octant |
 | PTE-AA-004 | conforming | `aa::normal`: tangents from the extracted polyline over a five-sample window | `a_forty_five_degree_staircase_reads_as_a_diagonal_not_as_axis_steps`, with `a_one_sample_window_would_alternate_between_axis_directions` measuring what the requirement forbids |
 | PTE-AA-005 | conforming | Confidence from mixture residual, colour separation and normal stability; offsets bounded by the formula rather than clamped | `every_offset_lies_within_the_pixel_support`, `stability_falls_where_the_boundary_turns_a_corner`, `no_sample_leaves_its_trust_region` |
@@ -132,17 +134,16 @@ the order the remaining ones should be taken in.
 | PTE-GEO-001..009 | conforming | `palette-tracer-geometry`: preparation, multi-scale corners with hysteresis, line and cubic models, bidirectional error, DP segmentation | 48 tests. `a_forty_five_degree_staircase_has_no_corners` (PTE-GEO-002), `a_ballooning_cubic_is_rejected_though_it_passes_through_the_samples` (§11.5), `the_chord_bound_is_never_exceeded_by_the_real_curve` (PTE-GEO-007), `exhausting_the_candidate_budget_falls_back_to_the_polyline` (PTE-GEO-005) |
 | PTE-GEO-010/011 | **not implemented** | — | §11.7 primitive recognition; a circle is cubics, not a circle |
 | PTE-GEO-012/013/014 | conforming | One chain per shared edge, fitted once; endpoints are junctions by construction; the validator reruns after fitting | `fitting_changes_only_the_chains`, `fitting_never_moves_a_chain_endpoint`, `fitting_a_reversed_chain_gives_the_reversed_fit_exactly` |
-| PTE-GEO-024/025 | conforming | `pixel-art` sets a zero tolerance, which means "the grid *is* the geometry" and skips fitting | `a_zero_tolerance_leaves_every_chain_untouched` |
 | PTE-STROKE-010/011/012 | conforming | Interfaces emitted from shared edges | `no_coloring_book_interface_is_emitted_twice` |
 | PTE-STROKE-001..009 | **not implemented** | — | No centrelines |
 | PTE-GRAD-* , PTE-FAB-* | **not implemented** | Refused by name at configuration time | `a_stroke_or_gradient_request_is_refused_with_its_requirement` |
 | PTE-SVG-001..005 | conforming | `svg::writer` | `output_is_a_standalone_svg_with_a_finite_viewport`, `a_hole_is_empty_under_nonzero_winding` |
-| PTE-SVG-007/008/009 | conforming | Searched precision; one chain, two orientations | `precision_is_searched_not_fixed`, `shared_coordinates_are_byte_identical_after_reversal` |
+| PTE-SVG-007/008/009 | conforming | Searched precision; automatic output reserves the subpixel reconstruction budget; one chain, two orientations | `precision_is_searched_not_fixed`, `automatic_precision_preserves_subpixel_reconstruction`, `shared_coordinates_are_byte_identical_after_reversal` |
 | PTE-SVG-012/013 | conforming | Caller's bytes; alpha once | `a_palette_colour_survives_verbatim`, `alpha_is_applied_exactly_once` |
 | PTE-SEC-001 | conforming | `escape_xml` | `a_hostile_label_is_escaped` |
 | PTE-SEC-005/006/007 | conforming | `checked`, incremental limits | `an_adversarial_region_count_hits_the_limit_cleanly` |
 | PTE-SEC-009 | conforming | `unsafe_code = "deny"` workspace-wide | The workspace lint table |
-| PTE-DET-001..004 | conforming | Quantised keys, stable heaps, no unordered iteration in an output path | `determinism.rs`, 8 tests, plus `make engine-parity`: the same engine compiled for `wasm32-wasip1` and run under Node's V8 produces byte-identical semantic digests on all 13 fixtures. Browser-engine parity beyond V8 is still unproven |
+| PTE-DET-001..004 | conforming | Quantised keys, stable heaps, no unordered iteration in an output path | `determinism.rs`, 8 tests, plus `make engine-parity`: the same engine compiled for `wasm32-wasip1` and run under Node's V8 produces byte-identical semantic digests on all 12 fixtures. Browser-engine parity beyond V8 is still unproven |
 | PTE-LIC-001..005 | conforming | ADR-0003, `deny.toml`, `THIRD_PARTY_NOTICES.md` | `make engine-deny` → `advisories ok, bans ok, licenses ok, sources ok`. Running it for the first time found the policy failing: `arrayref` is BSD-2-Clause only, and is now admitted with a review note |
 | PTE-NO-042 | conforming | Unimplemented settings refused by name with the governing requirement, now including `geometry.allowArcs` | `unimplemented_modifiers_are_refused`, `an_unimplemented_profile_is_refused_not_downgraded` |
 | PTE-TEST-003/004 | partly | 12 synthetic fixtures regenerated from analytic descriptions, with §25.2 manifests: `tools/make_fixtures.py`, `make engine-fixtures` | Synthetic only. No real-world corpus, and no multiple-resolution or rotation sweep yet |
@@ -161,8 +162,8 @@ topology/nested-rectangles             3     3    20      0     587       0     
 topology/donut                         3     3    86     30    1523       0        0
 adversarial/checkerboard-4px           2   188  1024      0    7953       0        0
 topology/one-pixel-bridge              3     3    36      0     683       1        0
-curves/circle-subpixel-0               4     7    16      4     709       0        0
-curves/circle-subpixel-1               3     4     8      6     677       0        0
+curves/circle-subpixel-0               2     2     6      6     619       0        0
+curves/circle-subpixel-1               2     2     6      6     625       0        0
 curves/rounded-rectangle               2     2    12      8     616       0        0
 curves/star-acute-corners              2     2    20     20    1104       0        0
 curves/shallow-staircase               2     3     8      0     449       0        0
@@ -187,14 +188,15 @@ fixtures:
 
 ```
                       faces  lines cubics  bytes        faces  lines cubics  bytes
-circle-subpixel-0         8    146     16   1917   ->       4     16      4    709
-circle-subpixel-1         9    158     22   2167   ->       3      8      6    677
+circle-subpixel-0         8    146     16   1917   ->       2      6      6    619
+circle-subpixel-1         9    158     22   2167   ->       2      6      6    625
 rounded-rectangle        14    184      4   2181   ->       2     12      8    616
 star-acute-corners       47    556     12   6160   ->       2     20     20   1104
 ```
 
 A five-pointed star is now two faces — the star and its background — described
-by 20 lines and 20 cubics. It was 47 faces and 556 lines. Two changes did this,
+by 20 lines and 20 cubics. It was 47 faces and 556 lines. Both circles are also
+the expected two faces after fixed-point fringe cleanup. Three changes did this,
 and the larger one was not §10: §8.6's fringe gate was rejecting genuine fringe
 because its mixture model assumed the wrong compositing transfer, and §8.7's
 shape veto was blocking the rest. `docs/notes/subpixel-antialias.md` §1 records
@@ -243,8 +245,8 @@ These are the things a reader would otherwise have to discover.
    PTE-TOPO-011/012/013 is not implemented: junctions sit where extraction put
    them, and §10 pins every chain endpoint rather than moving it. The
    barycentric weights §10.4 asks for exist in `color::mixture` and are tested,
-   but nothing consumes them. This is the largest remaining gap in §10, and it
-   is why `curves/circle-subpixel-0` is four faces rather than two.
+   but nothing consumes them. The current analytic circles contain no
+   junctions, so their passing gates do not exercise or discharge this gap.
 2. **The compositing transfer is estimated per pixel, not pooled.** Two
    neighbouring samples on one boundary can in principle choose different
    hypotheses. The margin rule makes it rare and §10.5's smoothness absorbs a

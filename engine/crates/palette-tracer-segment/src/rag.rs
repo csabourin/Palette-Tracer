@@ -782,6 +782,35 @@ pub fn reassign_fringe(
     Ok(audits)
 }
 
+/// Reassign fringe regions until a complete deterministic sweep makes no
+/// further change.
+///
+/// Absorbing one band can expose the next band to its two true neighbours. A
+/// single raster-order sweep can therefore under-trigger on layered
+/// antialiasing even though every individual decision is valid. Each
+/// successful pass removes at least one live region, so this terminates after
+/// at most the initial region count and retains every reversible audit record
+/// (PTE-SEG-015/016).
+///
+/// # Errors
+///
+/// [`TraceError::Cancelled`] or [`TraceError::ResourceLimit`].
+pub fn reassign_fringe_to_fixed_point(
+    graph: &mut RegionGraph,
+    policy: &EffectiveSegmentation,
+    budget: &WorkBudget,
+    control: &dyn TraceControl,
+) -> Result<Vec<FringeAudit>, TraceError> {
+    let mut audits = Vec::new();
+    loop {
+        let pass = reassign_fringe(graph, policy, budget, control)?;
+        if pass.is_empty() {
+            return Ok(audits);
+        }
+        audits.extend(pass);
+    }
+}
+
 /// Rewrite a label plane so it names the surviving regions, densely numbered
 /// in row-major order of first appearance (PTE-API-010).
 ///
@@ -1170,22 +1199,29 @@ mod tests {
         policy.small_region_pixels = 8;
         policy.fringe_max_residual = 0.2;
 
-        let audits =
-            reassign_fringe(&mut s.graph, &policy, &WorkBudget::unbounded(), &NoControl).unwrap();
+        let audits = reassign_fringe_to_fixed_point(
+            &mut s.graph,
+            &policy,
+            &WorkBudget::unbounded(),
+            &NoControl,
+        )
+        .unwrap();
 
-        if !audits.is_empty() {
-            let audit = audits[0];
-            assert_eq!(audit.pixels, 4, "the fringe column is four pixels");
-            assert!(audit.residual <= 0.2, "residual {}", audit.residual);
-            assert!(
-                (0.0..=1.0).contains(&audit.coverage),
-                "coverage {}",
-                audit.coverage
-            );
-            // PTE-SEG-016: the record identifies both sides, so the decision
-            // can be reviewed and reversed.
-            assert_ne!(audit.source, audit.target);
-        }
+        let audit = audits.first().expect("the fringe must be reassigned");
+        assert_eq!(audit.pixels, 4, "the fringe column is four pixels");
+        assert!(audit.residual <= 0.2, "residual {}", audit.residual);
+        assert!(
+            (0.0..=1.0).contains(&audit.coverage),
+            "coverage {}",
+            audit.coverage
+        );
+        // PTE-SEG-016: the record identifies both sides, so the decision can
+        // be reviewed and reversed.
+        assert_ne!(audit.source, audit.target);
+
+        let after =
+            reassign_fringe(&mut s.graph, &policy, &WorkBudget::unbounded(), &NoControl).unwrap();
+        assert!(after.is_empty(), "cleanup must stop at a fixed point");
 
         // Whatever happened, no pixel was lost.
         let (labels, count) = apply(&s.graph, &s.labels).unwrap();
