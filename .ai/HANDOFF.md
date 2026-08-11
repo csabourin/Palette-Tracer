@@ -1,10 +1,29 @@
 # Handoff
 
 **Session date:** 2026-08-11
-**Branch:** `agent/document-mit-boundary`, from merged PR #17's `master`
-**Working slice:** recorded the repository owner's MIT-only licence decision
-and defined the GPL-host/MIT-engine integration boundary. No Python
+**Branch:** `agent/fix-cli-config-thin-features`, from merged PR #19's `master`
+**Working slice:** fixed the two configuration defects recorded by the prior
+session: CLI flags now override config files regardless of token order, and
+`segmentation.protectThinFeatures` now controls the merge penalty. No Python
 implementation source was read or changed.
+
+## Configuration correctness
+
+PTE-API-015 defines precedence by source, not by argument position. The CLI
+previously mutated one `TraceConfig` while scanning tokens, so a later
+`--config` erased an earlier `--profile`. `ConfigOverrides` now collects every
+supported configuration flag and applies those values after all config files
+have been parsed. `a_profile_flag_before_the_config_file_still_wins` proves the
+profile wins while an unrelated file field remains in force.
+
+`segmentation.protectThinFeatures=false` previously changed only the semantic
+digest: §8.7's role penalty was always active. `merge_cost` now includes that
+penalty only when the resolved switch is true, and the protected-outcome census
+uses the same gate. `disabling_thin_feature_protection_changes_the_merge_decision`
+holds every other input constant and proves the switch changes the production
+merge decision. The default remains true, so the 12-fixture corpus is
+unchanged by the census; no byte-for-byte comparison with the parent commit was
+run.
 
 ## Licence decision
 
@@ -130,7 +149,7 @@ Every other fixture is byte-identical, including `pixel-art/diagonals` and
 ## Commands run, and what they actually returned
 
 ```
-cd engine && cargo test --workspace          398 passed, 0 failed
+cd engine && cargo test --workspace          400 passed, 0 failed
 cd engine && cargo clippy --workspace --all-targets -- -D warnings   clean
 cd engine && cargo fmt --check                                       clean
 cd engine && cargo check --workspace --target wasm32-unknown-unknown clean
@@ -138,6 +157,29 @@ make engine-deny        advisories ok, bans ok, licenses ok, sources ok
 make engine-parity      12 fixture(s), native and wasm32 agree
 make engine-corpus      the census above
 ```
+
+For this configuration slice specifically:
+
+```
+cargo test -p palette-tracer-cli --test cli
+    23 passed, 0 failed
+cargo test -p palette-tracer-segment
+    28 passed, 0 failed
+make engine-test        400 passed, 0 failed
+make engine-lint        fmt clean; Clippy clean with -D warnings
+make engine-wasm        workspace check clean for wasm32-unknown-unknown
+make engine-deny        advisories ok, bans ok, licenses ok, sources ok
+make engine-corpus      12 fixtures; census unchanged
+make engine-parity      12 fixtures; native and wasm32 agree
+git diff --check        clean
+```
+
+Both new regression tests were run before the implementation and failed for
+the intended reason: the effective profile was `flat-illustration` instead of
+`logo`, and disabling thin-feature protection still produced zero merges.
+After the fixes both pass. The first `make engine-parity` retry stopped before
+comparison with `node: not found` because the Rust-only `PATH` omitted Node;
+adding the installed Node 22 directory made the command pass.
 
 The MIT-only documentation session additionally ran:
 
@@ -154,25 +196,6 @@ succeeded on a plain retry; if it fails for you, just run it again.
 
 The Python suite was not re-run; nothing under `palette_trace/`, `tests/` or
 `pyproject.toml` changed.
-
-## Two defects found on the way that are NOT fixed
-
-Both were found while building the diagnosis harness, both are real, and both
-are out of scope for a §10 change. **Neither has a test yet.** They are the
-cheapest useful thing a next session could pick up.
-
-1. **`--config <FILE>` silently overrides `--profile <NAME>`.**
-   `pte trace --profile logo --config c.json ...` runs `flat-illustration`. The
-   JSON's absent `profile` key defaults and wins over the flag, which violates
-   PTE-API-015 ("CLI flags override config-file fields in a documented order")
-   and the CLI's own help text ("flags below override it"). Visible with
-   `--print-effective-config`. The 22-test CLI suite does not cover it.
-
-2. **`segmentation.protectThinFeatures` is read by nothing but the digest.**
-   The only reference outside the config model is `digest.rs:394`. Setting it
-   to `false` changes the semantic digest without changing a single decision —
-   arguably worse than a no-op, because the digest asserts the configuration
-   mattered.
 
 ## Things tried that did not work, so the next session does not repeat them
 

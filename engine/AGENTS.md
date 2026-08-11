@@ -21,7 +21,7 @@ so a citation is never ambiguous.
 ## Commands
 
 ```bash
-cargo test --workspace                                    # 397 tests
+cargo test --workspace                                    # 400 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 cargo check --workspace --target wasm32-unknown-unknown   # PTE-ARCH-003

@@ -454,12 +454,16 @@ fn merge_cost(graph: &RegionGraph, a: u32, b: u32, policy: &EffectiveSegmentatio
     // §8.7: a protected feature resists absorption. The penalty scales with
     // the *smaller* region's protection, because absorbing a protected thin
     // feature into a big neighbour is what destroys it.
-    let role_penalty = PROTECTION_PENALTY_SCALE
-        * if sa.area <= sb.area {
-            sa.protection
-        } else {
-            sb.protection
-        };
+    let role_penalty = if policy.protect_thin_features {
+        PROTECTION_PENALTY_SCALE
+            * if sa.area <= sb.area {
+                sa.protection
+            } else {
+                sb.protection
+            }
+    } else {
+        0.0
+    };
 
     let area_gain = sa.area.max(sb.area) as f64 / (sa.area + sb.area) as f64;
     let gain = adjacency.boundary_length as f64 * area_gain;
@@ -546,8 +550,9 @@ pub fn merge(
             continue;
         };
         if cost > policy.merge_threshold {
-            if graph.summaries[a as usize].protection > 0.5
-                || graph.summaries[b as usize].protection > 0.5
+            if policy.protect_thin_features
+                && (graph.summaries[a as usize].protection > 0.5
+                    || graph.summaries[b as usize].protection > 0.5)
             {
                 outcome.protected += 1;
             }
@@ -1120,6 +1125,81 @@ mod tests {
             ..hairline.clone()
         };
         assert!(protection_score(&blob) < hairline_score);
+    }
+
+    /// PTE-SEG-017 and PTE-NO-042: the public switch must control the merge
+    /// decision rather than merely changing the semantic digest.
+    #[test]
+    fn disabling_thin_feature_protection_changes_the_merge_decision() {
+        let color = lab([128, 128, 128]);
+        let stats = |count: u64| {
+            let mut stats = ColorStats::new();
+            for _ in 0..count {
+                stats.push(color);
+            }
+            stats
+        };
+        let graph = || {
+            let thin = RegionSummary {
+                area: 20,
+                bbox: (0, 0, 19, 0),
+                stats: stats(20),
+                mean_alpha: 1.0,
+                claim: LabelId::ZERO,
+                pinned: false,
+                perimeter: 42,
+                protection: 1.0,
+            };
+            let neighbour = RegionSummary {
+                area: 100,
+                bbox: (0, 1, 19, 5),
+                stats: stats(100),
+                mean_alpha: 1.0,
+                claim: LabelId::ZERO,
+                pinned: false,
+                perimeter: 50,
+                protection: 0.0,
+            };
+            let shared = Adjacency {
+                boundary_length: 20,
+                weight_sum: 0,
+            };
+            RegionGraph {
+                summaries: vec![thin, neighbour],
+                adjacency: vec![BTreeMap::from([(1, shared)]), BTreeMap::from([(0, shared)])],
+                parent: vec![0, 1],
+                generation: vec![Generation::default(); 2],
+                alive: vec![true; 2],
+            }
+        };
+
+        let mut protected_policy = policy();
+        protected_policy.merge_threshold = 0.01;
+        protected_policy.protect_thin_features = true;
+        let mut protected = graph();
+        let protected_outcome = merge(
+            &mut protected,
+            &protected_policy,
+            &WorkBudget::unbounded(),
+            &NoControl,
+        )
+        .unwrap();
+        assert_eq!(protected_outcome.merges, 0, "the hairline must survive");
+
+        let mut unprotected_policy = protected_policy;
+        unprotected_policy.protect_thin_features = false;
+        let mut unprotected = graph();
+        let unprotected_outcome = merge(
+            &mut unprotected,
+            &unprotected_policy,
+            &WorkBudget::unbounded(),
+            &NoControl,
+        )
+        .unwrap();
+        assert_eq!(
+            unprotected_outcome.merges, 1,
+            "disabling the switch must remove the protection penalty"
+        );
     }
 
     /// §8.6 and PTE-SEG-017: what protects a thin feature is colour evidence,
