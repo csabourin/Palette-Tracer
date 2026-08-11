@@ -98,14 +98,18 @@ impl FitOptions {
 pub struct FitStats {
     /// Chains replaced by fitted geometry.
     pub chains_fitted: u32,
-    /// Chains where the fitter ran and kept the polyline anyway: the declared
-    /// fallback of PTE-GEO-005, and a quality signal.
-    ///
-    /// Distinct from [`FitStats::chains_trivial`]. Conflating the two would
-    /// make a report of "three fallbacks" unreadable: it could mean three
-    /// boundaries the fitter could not improve, or three that were already one
-    /// segment long and had nothing to improve.
+    /// Chains where the search ran out of budget: PTE-GEO-005's declared
+    /// fallback, and the only one of the three that is a *failure*.
     pub polyline_fallbacks: u32,
+    /// Chains where the search completed and found nothing shorter than the
+    /// polyline it started from.
+    ///
+    /// Kept separate from [`FitStats::polyline_fallbacks`] because the two read
+    /// completely differently. A short jagged fringe boundary genuinely has no
+    /// simpler faithful representation, and counting that as a fallback would
+    /// report a search failure where the search in fact succeeded and returned
+    /// the right answer.
+    pub chains_already_minimal: u32,
     /// Chains with nothing to fit: fewer than three samples, or already
     /// carrying fitted geometry.
     pub chains_trivial: u32,
@@ -178,8 +182,12 @@ pub fn fit_topology(
                 stats.chains_trivial += 1;
                 stats.segments_after += before;
             }
-            Err(Skipped::KeptThePolyline) => {
+            Err(Skipped::BudgetExhausted) => {
                 stats.polyline_fallbacks += 1;
+                stats.segments_after += before;
+            }
+            Err(Skipped::AlreadyMinimal) => {
+                stats.chains_already_minimal += 1;
                 stats.segments_after += before;
             }
         }
@@ -201,8 +209,11 @@ struct FittedChain {
 enum Skipped {
     /// Fewer than three samples, or already fitted: no simplification exists.
     NothingToFit,
-    /// The fitter ran and the polyline was the best answer available.
-    KeptThePolyline,
+    /// The search ran out of candidate budget (PTE-GEO-005).
+    BudgetExhausted,
+    /// The search completed and the polyline was already the shortest faithful
+    /// representation.
+    AlreadyMinimal,
 }
 
 /// Fit one chain, or say why it was left alone.
@@ -230,12 +241,12 @@ fn fit_one(
 
     let fitted = fit_chain(&samples, &pins, options, stats);
     if fitted.exhausted || fitted.segments.is_empty() {
-        return Err(Skipped::KeptThePolyline);
+        return Err(Skipped::BudgetExhausted);
     }
     // Refuse an outcome that is not an improvement, so a chain is never made
     // more complex by being fitted.
     if fitted.segments.len() >= working.segments.len() {
-        return Err(Skipped::KeptThePolyline);
+        return Err(Skipped::AlreadyMinimal);
     }
 
     let out = CurveChain {
@@ -511,6 +522,7 @@ mod tests {
         assert_eq!(topology, before);
         assert_eq!(stats.chains_trivial, 1, "already fitted is not a fallback");
         assert_eq!(stats.polyline_fallbacks, 0);
+        assert_eq!(stats.chains_already_minimal, 0);
     }
 
     /// Cancellation is honoured on a bounded stride, like every other stage

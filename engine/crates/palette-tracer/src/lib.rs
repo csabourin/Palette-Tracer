@@ -624,15 +624,34 @@ impl Engine {
             )
             .about("PTE-AA-009"),
         );
+        let chains = fit.chains_fitted
+            + fit.polyline_fallbacks
+            + fit.chains_already_minimal
+            + fit.chains_trivial;
         if fit.polyline_fallbacks > 0 {
             warnings.push(
-                Warning::info(
+                Warning::warn(
                     "geometry.polyline_fallbacks",
                     format!(
-                        "{} of {} shared chains kept their grid polyline because no \
-                         model held the tolerance",
-                        fit.polyline_fallbacks,
-                        fit.chains_fitted + fit.polyline_fallbacks
+                        "{} of {chains} shared chains exhausted the fitting budget and \
+                         kept their grid polyline",
+                        fit.polyline_fallbacks
+                    ),
+                )
+                .about("PTE-GEO-005"),
+            );
+        }
+        // Not a warning: a short jagged boundary has no simpler faithful
+        // representation, so the search succeeded and returned it. Saying so
+        // keeps a reader from reading the count above as if it included these.
+        if fit.chains_already_minimal > 0 {
+            warnings.push(
+                Warning::info(
+                    "geometry.chains_already_minimal",
+                    format!(
+                        "{} of {chains} shared chains were already their own simplest \
+                         faithful representation",
+                        fit.chains_already_minimal
                     ),
                 )
                 .about("PTE-GEO-005"),

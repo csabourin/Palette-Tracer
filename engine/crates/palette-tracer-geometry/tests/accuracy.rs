@@ -339,7 +339,10 @@ fn the_statistics_add_up() {
     let stats = fit_topology(&mut topology, &options(0.25), &NoControl).unwrap();
 
     assert_eq!(
-        stats.chains_fitted + stats.polyline_fallbacks + stats.chains_trivial,
+        stats.chains_fitted
+            + stats.polyline_fallbacks
+            + stats.chains_already_minimal
+            + stats.chains_trivial,
         6
     );
     assert_eq!(
