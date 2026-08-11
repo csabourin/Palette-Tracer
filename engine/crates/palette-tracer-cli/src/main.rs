@@ -303,6 +303,19 @@ fn trace(args: &[String]) -> Result<(), TraceError> {
         }));
     };
 
+    // PTE-API-014: two machine-readable artefacts cannot share one stream. If
+    // both were allowed on stdout the caller would receive an SVG document with
+    // a JSON object appended, which parses as neither. Refusing is the only
+    // honest answer; silently dropping one would lose data the caller asked for.
+    if output == "-" && options.report.as_deref() == Some("-") {
+        return Err(TraceError::Config(ConfigError::UnknownValue {
+            field: "report",
+            got: "the SVG and the report cannot both go to stdout; \
+                  send one of them to a file"
+                .to_owned(),
+        }));
+    }
+
     let engine = Engine::new();
     let effective = engine.validate_config(&options.config)?;
     if options.print_effective_config {

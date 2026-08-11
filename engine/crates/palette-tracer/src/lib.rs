@@ -27,12 +27,17 @@
 //! antialias-fringe reassignment, one shared boundary graph with the 2x2
 //! ambiguity resolved by energy, and deterministic SVG.
 //!
+//! Shared chains are then fitted to lines and cubic Béziers with bidirectional
+//! error validation (§11), so a boundary that should be one line is one line.
+//!
 //! # What it does not
 //!
-//! Boundaries are on the pixel grid. Subpixel antialias reconstruction (§10),
-//! curve fitting (§11), strokes (§13), gradients (§14) and fabrication (§16)
-//! are **not** implemented, and anything that would need them is refused by
-//! name at configuration time rather than silently approximated
+//! Boundary *positions* still come from the pixel grid: subpixel antialias
+//! reconstruction (§10) is **not** implemented, so fitting makes the geometry
+//! compact and smooth without making it subpixel-accurate. Arcs (§11.4),
+//! primitive recognition (§11.7), strokes (§13), gradients (§14) and
+//! fabrication (§16) are **not** implemented, and anything that would need them
+//! is refused by name at configuration time rather than silently approximated
 //! (PTE-NO-042). `docs/IMPLEMENTATION_STATUS.md` is the authority on what is
 //! and is not built.
 
@@ -52,6 +57,7 @@ use palette_tracer_core::report::{
     REPORT_SCHEMA_VERSION, RepresentationReport, SegmentationReport, TopologyReport, TraceReport,
     Warning,
 };
+use palette_tracer_geometry::{FitOptions, FitStats};
 use palette_tracer_topology::{AmbiguityProfile, ExtractOptions, Extraction};
 use std::borrow::Cow;
 
@@ -82,7 +88,8 @@ pub struct Capabilities {
 /// engine did *not* do rather than inferring it from silence (§0.2).
 pub const UNIMPLEMENTED: &[&str] = &[
     "PTE-AA-001..009 (§10 subpixel antialias reconstruction)",
-    "PTE-GEO-001..021 (§11 corners, curves and primitives)",
+    "PTE-GEO-010/011 (§11.7 primitive recognition)",
+    "the §11.4 circular arc model; lines and cubics only",
     "PTE-GEO-015..021 (§12 logo and lettering regularization)",
     "PTE-STROKE-001..009 (§13 centrelines and widths)",
     "PTE-GRAD-001..010 (§14 gradient reconstruction)",
@@ -96,6 +103,25 @@ pub const UNIMPLEMENTED: &[&str] = &[
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Engine {
     capabilities: Capabilities,
+}
+
+/// The fitter's view of the effective configuration (§11, Appendix G.1).
+///
+/// One place where geometry settings cross into `palette-tracer-geometry`, so
+/// the stage crate stays independent of the configuration model (ADR-0002).
+fn fit_options(config: &EffectiveConfig) -> FitOptions {
+    FitOptions {
+        // §15: `pixel-art` sets this to zero, which is not "fit very tightly"
+        // but "the pixel grid is the intended geometry". `FitOptions::enabled`
+        // reads it that way and the chains are left alone.
+        tolerance_px: config.geometry.curve_tolerance_px,
+        corner_threshold_deg: config.geometry.corner_threshold_deg,
+        corner_hysteresis_deg: config.geometry.corner_hysteresis_deg,
+        // Always false here: `Profile::expand` refuses a request for arcs by
+        // name (PTE-NO-042), so this cannot be true at this point.
+        allow_arcs: config.geometry.allow_arcs,
+        max_span_candidates: config.geometry.max_span_candidates,
+    }
 }
 
 /// Immutable analysis products (§5.3 stage B, PTE-ARCH-009).
@@ -139,7 +165,15 @@ impl Engine {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            capabilities: Capabilities::default(),
+            capabilities: Capabilities {
+                // §11 line and cubic fitting with bidirectional validation.
+                // Arcs (§11.4) and primitive recognition (§11.7) are not
+                // included, and `UNIMPLEMENTED` names both.
+                curves: true,
+                strokes: false,
+                gradients: false,
+                fabrication: false,
+            },
         }
     }
 
@@ -281,12 +315,30 @@ impl Engine {
             stage: Stage::Topology,
         });
 
-        let extraction = self.extract(analysis, segmentation, config, budget, control)?;
+        let mut extraction = self.extract(analysis, segmentation, config, budget, control)?;
         // PTE-TOPO-005: the validator is not optional.
         palette_tracer_topology::validate(&extraction.topology)?;
         control.progress(ProgressEvent::StageFinished {
             stage: Stage::Topology,
         });
+
+        // Stage F (§5.3): fit the shared chains. This replaces geometry and
+        // nothing else -- vertices, half-edges, faces and cycles are untouched,
+        // and each chain is fitted once and inherited by both its faces
+        // (PTE-GEO-012, PTE-AA-008).
+        budget.enter(Stage::Fit);
+        control.progress(ProgressEvent::StageStarted { stage: Stage::Fit });
+        let fit = palette_tracer_geometry::fit_topology(
+            &mut extraction.topology,
+            &fit_options(config),
+            control,
+        )?;
+        // PTE-GEO-014: "Any post-fit optimization that changes shared geometry
+        // MUST rerun topology corridor and intersection validation." Fitting
+        // changes shared geometry, so the validator runs again rather than
+        // being trusted to have covered it the first time.
+        palette_tracer_topology::validate(&extraction.topology)?;
+        control.progress(ProgressEvent::StageFinished { stage: Stage::Fit });
 
         let mut warnings = Vec::new();
         let paints = self.paints(analysis, segmentation, config, &mut warnings);
@@ -326,6 +378,7 @@ impl Engine {
             analysis,
             segmentation,
             &extraction,
+            &fit,
             &document,
             &svg,
             config,
@@ -533,6 +586,7 @@ impl Engine {
         analysis: &Analysis,
         segmentation: &Segmentation,
         extraction: &Extraction,
+        fit: &FitStats,
         document: &VectorDocument,
         svg: &str,
         config: &EffectiveConfig,
@@ -556,19 +610,53 @@ impl Engine {
                 .about("PTE-COLOR-012"),
             );
         }
-        // §0.2: the caller is told what did *not* happen. Boundaries are on the
-        // grid because §10 is not implemented, and saying "crisp_grid" without
-        // saying why would let a reader assume it was a choice.
+        // §0.2: the caller is told what did *not* happen. §11 fitting now
+        // makes the geometry compact; it does not make it subpixel-accurate,
+        // and a reader who saw only "cubics" could reasonably assume it did.
+        // The boundary *evidence* is still the pixel-cell interface.
         warnings.push(
             Warning::info(
-                "geometry.boundaries_are_grid_aligned",
-                "boundaries sit on pixel-cell interfaces: subpixel coverage \
-                 reconstruction (§10) and curve fitting (§11) are not \
-                 implemented in this build"
+                "geometry.evidence_is_the_pixel_grid",
+                "boundary positions come from pixel-cell interfaces: curve \
+                 fitting (§11) is applied, subpixel coverage reconstruction \
+                 (§10) is not implemented in this build"
                     .to_owned(),
             )
             .about("PTE-AA-009"),
         );
+        let chains = fit.chains_fitted
+            + fit.polyline_fallbacks
+            + fit.chains_already_minimal
+            + fit.chains_trivial;
+        if fit.polyline_fallbacks > 0 {
+            warnings.push(
+                Warning::warn(
+                    "geometry.polyline_fallbacks",
+                    format!(
+                        "{} of {chains} shared chains exhausted the fitting budget and \
+                         kept their grid polyline",
+                        fit.polyline_fallbacks
+                    ),
+                )
+                .about("PTE-GEO-005"),
+            );
+        }
+        // Not a warning: a short jagged boundary has no simpler faithful
+        // representation, so the search succeeded and returned it. Saying so
+        // keeps a reader from reading the count above as if it included these.
+        if fit.chains_already_minimal > 0 {
+            warnings.push(
+                Warning::info(
+                    "geometry.chains_already_minimal",
+                    format!(
+                        "{} of {chains} shared chains were already their own simplest \
+                         faithful representation",
+                        fit.chains_already_minimal
+                    ),
+                )
+                .about("PTE-GEO-005"),
+            );
+        }
         if config.profile == Profile::PixelArt
             && config.geometry.pixel_art_mode != PixelArtMode::Blocky
         {
@@ -649,7 +737,7 @@ impl Engine {
                 gradients: 0,
                 gradient_stops: 0,
                 control_points,
-                polyline_fallbacks: 0,
+                polyline_fallbacks: fit.polyline_fallbacks,
                 svg_bytes: palette_tracer_core::checked::usize_to_u64(svg.len()),
                 coordinate_decimals: palette_tracer_svg::choose_precision(
                     document,

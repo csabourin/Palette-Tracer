@@ -227,8 +227,10 @@ pub fn generate(
     });
 
     let mut entries = pinned.to_vec();
-    let mut next_id = pinned.iter().map(|e| e.id).max().map_or(0, |m| m + 1);
-    for center in centers {
+    // Automatic entries continue the pinned identifiers rather than restarting,
+    // so a pinned entry never collides with a generated one (PTE-COLOR-019).
+    let first_id = pinned.iter().map(|e| e.id).max().map_or(0, |m| m + 1);
+    for (next_id, center) in (first_id..).zip(centers) {
         let rgb = center.to_linear().clamped().to_encoded().to_u8();
         let mut entry =
             PaletteEntry::new(next_id, Color::rgb(rgb[0], rgb[1], rgb[2]), default_reach);
@@ -239,7 +241,6 @@ pub fn generate(
         entry.anchor = center;
         entry.anchor_lch = center.to_oklch();
         entries.push(entry);
-        next_id += 1;
     }
 
     Ok(Palette::from_entries(entries))

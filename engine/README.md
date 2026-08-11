@@ -19,20 +19,29 @@ make engine-wasm          # cargo check --target wasm32-unknown-unknown
 # Trace the repository's own sample image
 python3 engine/tools/png_to_ppm.py examples/sample.png /tmp/sample.pam
 cd engine && cargo run -p palette-tracer-cli -- trace \
-    --profile flat-illustration --report - /tmp/sample.pam /tmp/sample.svg
+    --profile flat-illustration --report /tmp/report.json \
+    /tmp/sample.pam /tmp/sample.svg
 ```
+
+The SVG and the report are two machine-readable artefacts, so they cannot share
+one stream; sending both to `-` is refused rather than concatenated.
 
 ## Status
 
 **Early.** Read `docs/IMPLEMENTATION_STATUS.md` before forming an expectation;
 it is written to be believed rather than to be encouraging.
 
-The short version: the colour pipeline, the segmentation, the shared topology
-and the SVG serialiser are built and tested. **Curve fitting is not**, so
-boundaries are grid-aligned polylines — correct, seam-free, deterministic, and
-much larger than they need to be. Strokes, gradients and fabrication are not
-built either, and asking for them returns an error naming the requirement
-rather than quietly producing something else.
+The short version: the colour pipeline, the segmentation, the shared topology,
+§11 curve fitting and the SVG serialiser are built and tested. **Subpixel
+antialias reconstruction is not** (§10), so boundaries are fitted to lines and
+cubics — compact, seam-free, deterministic — but the positions they are fitted
+*to* still come from pixel-cell interfaces. On a clean antialiased circle that
+shows up as eight faces where there should be two; the corpus census in
+`docs/IMPLEMENTATION_STATUS.md` quantifies it.
+
+Arcs, primitive recognition, strokes, gradients and fabrication are not built,
+and asking for them returns an error naming the requirement rather than quietly
+producing something else.
 
 ## Layout
 

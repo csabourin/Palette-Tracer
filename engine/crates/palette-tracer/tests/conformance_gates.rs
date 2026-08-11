@@ -314,13 +314,36 @@ fn no_coloring_book_interface_is_emitted_twice() {
         let mut paths: Vec<String> = Vec::new();
         output.document.for_each_element(|element| {
             if let Element::Stroke(stroke) = element {
-                let mut key = String::new();
-                let mut push = |p: palette_tracer_core::ir::Point| {
+                // The key is the *whole* geometry, control points included.
+                // Endpoints alone are not enough once §11 fitting is in play:
+                // the two ways round a one-pixel hole share both junctions and
+                // become two cubics bowing in opposite directions, which are
+                // distinct interfaces that an endpoint-only key would call
+                // duplicates. Comparing full geometry also makes this a
+                // stronger gate than before -- two edges fitted onto each other
+                // would now be caught, where previously they could not be.
+                fn push(key: &mut String, p: palette_tracer_core::ir::Point) {
                     key.push_str(&format!("{:.6},{:.6};", p.x, p.y));
-                };
-                push(stroke.geometry.start);
+                }
+                let mut key = String::new();
+                push(&mut key, stroke.geometry.start);
                 for segment in &stroke.geometry.segments {
-                    push(segment.end());
+                    match *segment {
+                        palette_tracer_core::ir::PathSegment::Line { to } => {
+                            key.push('L');
+                            push(&mut key, to);
+                        }
+                        palette_tracer_core::ir::PathSegment::Cubic { c1, c2, to } => {
+                            key.push('C');
+                            push(&mut key, c1);
+                            push(&mut key, c2);
+                            push(&mut key, to);
+                        }
+                        other => {
+                            key.push('?');
+                            push(&mut key, other.end());
+                        }
+                    }
                 }
                 paths.push(key);
             }
@@ -438,8 +461,10 @@ fn the_report_names_what_is_not_implemented() {
             .report
             .warnings
             .iter()
-            .any(|w| w.code == "geometry.boundaries_are_grid_aligned"),
-        "the grid-aligned boundary must be stated, not implied"
+            .any(|w| w.code == "geometry.evidence_is_the_pixel_grid"),
+        "that boundary *evidence* is still the pixel grid must be stated, not \
+         implied: §11 fitting makes the geometry compact without making it \
+         subpixel-accurate"
     );
     // PTE-AA-009: the boundary source census reflects what actually happened.
     assert_eq!(output.report.boundary_sources.coverage_reconstructed, 0);

@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 
 .PHONY: test test-unit test-conformance conformance phase0 verify-env install-dev web \
-	engine-test engine-lint engine-wasm engine-trace
+	engine-test engine-lint engine-wasm engine-deny engine-trace
 
 test:
 	$(PYTHON) -m pytest
@@ -46,6 +46,32 @@ engine-lint:
 # PTE-ARCH-003: every baseline algorithm compiles for wasm32 with no OS stubs.
 engine-wasm:
 	cd engine && cargo check --workspace --target wasm32-unknown-unknown
+
+# PTE-LIC-005: licence and advisory checks are release-blocking, so they need a
+# command that runs them. Requires `cargo install cargo-deny --locked`.
+engine-deny:
+	cd engine && cargo deny check
+
+# §25.2 synthetic reference corpus. Regenerated from analytic descriptions
+# rather than committed as rasters (PTE-TEST-004).
+ENGINE_FIXTURES ?= /tmp/pte-fixtures
+engine-fixtures:
+	python3 engine/tools/make_fixtures.py $(ENGINE_FIXTURES)
+
+# PTE-NO-049: the same engine, compiled for wasm32 and run by a JavaScript
+# runtime, must produce the same semantic digest as the native build.
+# Requires Node 18+ and `rustup target add wasm32-wasip1`.
+engine-parity: engine-fixtures
+	cd engine && cargo build --release -p palette-tracer-cli
+	cd engine && cargo build --release -p palette-tracer-cli --target wasm32-wasip1
+	node --experimental-wasi-unstable-preview1 \
+		engine/tools/wasm-parity.mjs $$(find $(ENGINE_FIXTURES) -name '*.pam' | sort)
+
+# Trace the whole corpus and print the §26.7 complexity census.
+engine-corpus: engine-fixtures
+	cd engine && cargo build --release -p palette-tracer-cli
+	@python3 engine/tools/corpus_report.py $(ENGINE_FIXTURES) \
+		engine/target/release/pte
 
 # End-to-end on the repository's own sample. `pte` reads Netpbm, not PNG:
 # the core takes decoded pixels (PTE-ARCH-001) and no codec adapter is built.

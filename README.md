@@ -22,12 +22,15 @@ adjacent fills cannot drift apart or leave a seam.
 
 It is early and it is not wired into the Python pipeline. Read
 `engine/docs/IMPLEMENTATION_STATUS.md` before forming an expectation -- curve
-fitting, strokes and gradients are not built yet. The engine is licensed
-`MIT OR Apache-2.0`; the rest of this repository remains GPL-3.0-or-later.
+fitting is built, but subpixel antialias reconstruction, strokes and gradients
+are not. The engine is licensed `MIT OR Apache-2.0`; the rest of this repository
+remains GPL-3.0-or-later.
 
 ```bash
-make engine-test    # 292 tests
+make engine-test    # 362 tests
 make engine-trace   # trace examples/sample.png end to end
+make engine-corpus  # trace the synthetic corpus and print the complexity census
+make engine-parity  # native and wasm32 must agree on every semantic digest
 ```
 
 ## Status
