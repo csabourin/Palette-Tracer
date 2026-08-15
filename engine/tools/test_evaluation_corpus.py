@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -32,6 +33,20 @@ class EvaluationCorpusTests(unittest.TestCase):
         pixels = [(0, 0, 0, 0), (223, 41, 97, 255)]
         with self.assertRaisesRegex(VALIDATOR.CorpusError, "under alpha zero"):
             VALIDATOR.check_hidden_rgb(pixels, "#df2961", "negative/hidden-rgb")
+
+    def test_topology_truth_must_match_the_reference_raster(self):
+        document = json.loads(VALIDATOR.MANIFEST.read_text(encoding="utf-8"))
+        entry = next(
+            item for item in document["fixtures"]
+            if item["id"] == "eval/logo/flat-exact-palette"
+        )
+        broken = json.loads(json.dumps(entry))
+        broken["topologyTruth"]["labels"][0]["holes"] = 99
+        broken["topologyTruth"]["labels"][0]["eulerCharacteristic"] = -97
+        with self.assertRaisesRegex(VALIDATOR.CorpusError, "disagrees"):
+            VALIDATOR.validate_topology_truth(
+                broken, VALIDATOR.FIXTURES / broken["path"]
+            )
 
 
 if __name__ == "__main__":

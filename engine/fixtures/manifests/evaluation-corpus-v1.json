@@ -21,6 +21,15 @@
       "protectedTopology": "Three coloured emblem regions remain distinct; central hole remains background.",
       "permittedExclusions": [],
       "metricGates": {"requiredColors": ["#142c52ff", "#dd4a43ff", "#199197ff", "#f6f3ebff"]},
+      "topologyTruth": {
+        "classificationMaxDistance": 0.12,
+        "labels": [
+          {"id": "navy", "rgba": "#142c52ff", "components": 2, "holes": 1, "eulerCharacteristic": 1},
+          {"id": "coral", "rgba": "#dd4a43ff", "components": 2, "holes": 0, "eulerCharacteristic": 2},
+          {"id": "teal", "rgba": "#199197ff", "components": 2, "holes": 0, "eulerCharacteristic": 2},
+          {"id": "cream", "rgba": "#f6f3ebff", "components": 2, "holes": 4, "eulerCharacteristic": -2}
+        ]
+      },
       "sourceVectorsAvailable": false,
       "generation": "tools/make_evaluation_corpus.py:flat_logo"
     },
@@ -119,6 +128,15 @@
       "protectedTopology": "Gold dot and two-pixel accent line remain separate from the background.",
       "permittedExclusions": [],
       "metricGates": {"rareColor": "#f5ad29ff", "maximumFraction": 0.005},
+      "topologyTruth": {
+        "classificationMaxDistance": 0.12,
+        "labels": [
+          {"id": "background", "rgba": "#0d1b2dff", "components": 1, "holes": 2, "eulerCharacteristic": -1},
+          {"id": "light", "rgba": "#e8ebe6ff", "components": 1, "holes": 0, "eulerCharacteristic": 1},
+          {"id": "green", "rgba": "#26523bff", "components": 1, "holes": 1, "eulerCharacteristic": 0},
+          {"id": "accent", "rgba": "#f5ad29ff", "components": 2, "holes": 0, "eulerCharacteristic": 2}
+        ]
+      },
       "sourceVectorsAvailable": false,
       "generation": "tools/make_evaluation_corpus.py:tiny_accent"
     },
@@ -189,6 +207,14 @@
       "protectedTopology": "Transparent exterior must not become an opaque pink region.",
       "permittedExclusions": [],
       "metricGates": {"hiddenRgb": "#df2961", "alphaStates": ["zero", "partial", "opaque"]},
+      "topologyTruth": {
+        "classificationMaxDistance": 0.12,
+        "labels": [
+          {"id": "transparent", "rgba": "#df296100", "components": 1, "holes": 1, "eulerCharacteristic": 0},
+          {"id": "teal", "rgba": "#1a929aff", "components": 1, "holes": 1, "eulerCharacteristic": 0},
+          {"id": "gold", "rgba": "#f7be40a0", "components": 1, "holes": 0, "eulerCharacteristic": 1}
+        ]
+      },
       "sourceVectorsAvailable": false,
       "generation": "tools/make_evaluation_corpus.py:hidden_rgb"
     },
@@ -245,6 +271,15 @@
       "protectedTopology": "Only the right-hand outline is closed in the input.",
       "permittedExclusions": ["Fabrication repair is not implemented yet; the tracer must not silently claim closure."],
       "metricGates": {},
+      "topologyTruth": {
+        "classificationMaxDistance": 0.12,
+        "labels": [
+          {"id": "background", "rgba": "#fafafaff", "components": 4, "holes": 2, "eulerCharacteristic": 2},
+          {"id": "ink", "rgba": "#16191cff", "components": 2, "holes": 3, "eulerCharacteristic": -1},
+          {"id": "open-endpoints", "rgba": "#d73a41ff", "components": 2, "holes": 0, "eulerCharacteristic": 2},
+          {"id": "closed-marker", "rgba": "#30964cff", "components": 1, "holes": 0, "eulerCharacteristic": 1}
+        ]
+      },
       "sourceVectorsAvailable": false,
       "generation": "tools/make_evaluation_corpus.py:open_closed"
     },

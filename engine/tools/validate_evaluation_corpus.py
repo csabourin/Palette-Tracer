@@ -28,12 +28,14 @@ def load_module(name: str, path: Path):
     if spec is None or spec.loader is None:
         raise CorpusError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
 PNG = load_module("pte_png_to_ppm", TOOLS / "png_to_ppm.py")
 GENERATOR = load_module("pte_make_evaluation_corpus", TOOLS / "make_evaluation_corpus.py")
+SCORER = load_module("pte_svg_scorer_validator", TOOLS / "svg_scorer.py")
 
 
 def sha256(data: bytes) -> str:
@@ -132,6 +134,48 @@ def check_uniform_grid(pixels, width: int, height: int, grid: int, fixture_id: s
                         raise CorpusError(f"{fixture_id}: cell at ({x0}, {y0}) is not uniform")
 
 
+def validate_topology_truth(entry: dict, path: Path) -> None:
+    truth = entry.get("topologyTruth")
+    if truth is None:
+        return
+    if not isinstance(truth, dict):
+        raise CorpusError(f"{entry['id']}: topologyTruth must be an object")
+    distance = truth.get("classificationMaxDistance")
+    if isinstance(distance, bool) or not isinstance(distance, (int, float)) or not 0 < distance <= 2:
+        raise CorpusError(f"{entry['id']}: invalid topology classification distance")
+    labels = truth.get("labels")
+    if not isinstance(labels, list) or len(labels) < 2:
+        raise CorpusError(f"{entry['id']}: topologyTruth needs at least two labels")
+    ids = [label.get("id") for label in labels if isinstance(label, dict)]
+    if len(ids) != len(labels) or len(ids) != len(set(ids)):
+        raise CorpusError(f"{entry['id']}: topology label IDs must be unique")
+    required = {"id", "rgba", "components", "holes", "eulerCharacteristic"}
+    for label in labels:
+        missing = sorted(required - label.keys())
+        if missing:
+            raise CorpusError(f"{entry['id']}: topology label {label.get('id')} lacks {missing}")
+        try:
+            SCORER.parse_rgba(label["rgba"])
+        except SCORER.ScoreError as error:
+            raise CorpusError(f"{entry['id']}: {error}") from error
+        for key in ("components", "holes", "eulerCharacteristic"):
+            value = label[key]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise CorpusError(f"{entry['id']}: topology {key} must be an integer")
+        if label["components"] < 0 or label["holes"] < 0:
+            raise CorpusError(f"{entry['id']}: topology counts cannot be negative")
+        if label["eulerCharacteristic"] != label["components"] - label["holes"]:
+            raise CorpusError(f"{entry['id']}: topology Euler characteristic is inconsistent")
+    image = SCORER.decode_png(path)
+    classified = SCORER.classify(image, labels, distance)
+    signature = SCORER.topology_signature(classified, image.width, image.height, labels)
+    if signature["unclassifiedPixels"]:
+        raise CorpusError(f"{entry['id']}: topology truth leaves reference pixels unclassified")
+    gate = SCORER.compare_topology(signature, truth)
+    if not gate["passed"]:
+        raise CorpusError(f"{entry['id']}: topology truth disagrees with the reference raster")
+
+
 def validate_entry(entry: dict) -> None:
     required_fields = {
         "id", "path", "sha256", "split", "class", "intendedProfiles",
@@ -175,6 +219,7 @@ def validate_entry(entry: dict) -> None:
         check_uniform_grid(pixels, width, height, gates["uniformGrid"], entry["id"])
     if "minimumUniqueColors" in gates and len(set(pixels)) < gates["minimumUniqueColors"]:
         raise CorpusError(f"{entry['id']}: only {len(set(pixels))} unique colours")
+    validate_topology_truth(entry, path)
 
 
 def check_regeneration(entries: list[dict]) -> None:
@@ -205,6 +250,15 @@ def validate() -> dict:
         raise CorpusError("train/development/holdout splits must each contain six fixtures")
     if Counter(entry["class"] for entry in entries) != Counter({"analytic": 13, "generated": 5}):
         raise CorpusError("corpus must contain 13 analytic and 5 generated fixtures")
+    topology_ids = {entry["id"] for entry in entries if "topologyTruth" in entry}
+    expected_topology_ids = {
+        "eval/logo/flat-exact-palette",
+        "eval/color/tiny-accent",
+        "eval/alpha/hidden-rgb",
+        "eval/adversarial/open-vs-closed",
+    }
+    if topology_ids != expected_topology_ids:
+        raise CorpusError("corpus v1 must retain its four machine-readable topology fixtures")
     for entry in entries:
         validate_entry(entry)
     check_regeneration(entries)

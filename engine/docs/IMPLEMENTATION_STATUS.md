@@ -3,7 +3,7 @@
 `engine/SPEC.md` is authoritative. This document records evidence; it does not
 redefine requirements.
 
-**Assessed at:** 2026-08-11, after the clean-room evaluation-corpus slice.
+**Assessed at:** 2026-08-14, after the first external-renderer baseline slice.
 **Rust evidence inherited from current `master`'s §11.7 QA:**
 `cargo test --workspace` → **423 tests and 2 doctests passed**;
 `cargo clippy --workspace --all-targets -- -D warnings` → clean;
@@ -14,14 +14,23 @@ environment and no dependency changed;
 `make engine-parity` → **13 fixtures, native and wasm32 agree**.
 Toolchain `rustc 1.97.1` on `x86_64-unknown-linux-gnu`.
 
-**Corpus evidence in this slice:**
-`python3 engine/tools/validate_evaluation_corpus.py` → **18 valid inputs,
+**Corpus and scorer evidence in this slice:**
+`make engine-evaluation-corpus` → **18 valid inputs,
 6 train / 6 development / 6 holdout; 13 analytic inputs regenerate
 byte-identically and 5 generated inputs match fixed digests**;
-`python3 -m unittest engine/tools/test_evaluation_corpus.py` → **4 passed**,
-including negative controls. Rust was not rerun in this environment because
-`cargo`, `rustc`, and `cargo-deny` are absent; this slice changes no Rust code,
-Cargo manifest, dependency, strict synthetic fixture, or tracing threshold.
+**18 tests passed**: five corpus-validator tests, eight scorer tests and five
+external-tool pin/fairness/renderer-adapter tests,
+including missing-hole, missing-accent, diagnostic-seam, active/external SVG
+and renderer-identity controls, plus an end-to-end exact topology pass.
+`make engine-vtracer-stable-baseline
+ENGINE_INKSCAPE=/mnt/c/Program\ Files/Inkscape/bin/inkscape.exe` is represented
+by the exact commands in `baselines/README.md`: VTracer stable 0.6.15 traced
+`eval/logo/flat-exact-palette` in 0.007551 s at 25,997,312 peak RSS bytes, and
+the blind scorer completed all twelve Inkscape 1.4.2 passes. The topology gate
+failed honestly; measured details are recorded below.
+Rust was not rerun because `cargo`, `rustc`, and `cargo-deny` are absent; this
+slice changes no Rust code, Cargo manifest, dependency, strict synthetic
+fixture, or tracing threshold.
 
 ## Status vocabulary
 
@@ -102,7 +111,7 @@ segments.
 
 | Phase | Status | Evidence | Remaining |
 |---|---|---|---|
-| Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 13-fixture strict synthetic corpus (`tools/make_fixtures.py`) plus an 18-input licensed clean-room evaluation corpus with fixed train/development/holdout splits (`fixtures/manifests/evaluation-corpus-v1.json`); `cargo deny` wired to `make engine-deny` | The five naturalistic inputs are generated rather than captured real-world photographs; no baseline benchmarks against VTracer, Potrace, AutoTrace or ImageTracerJS (PTE-BASE-001); memory and runtime budgets not calibrated (PTE-PERF-003); no blind SVG scorer (§39.1) |
+| Phase 0 — evidence, licensing, contracts | Partly conforming | Workspace, licences, ADR-0001/2/3, typed config/IR/report/digest with round-trip tests, CLI and WASM adapter skeletons; a 13-fixture strict synthetic corpus plus an 18-input licensed clean-room evaluation corpus with fixed splits; four machine-readable topology fixtures; blind arbitrary-SVG scoring with renderer/scorer/manifest/candidate digests; one VTracer stable 0.6.15 / Inkscape 1.4.2 measured vertical slice; `cargo deny` wired to `make engine-deny` | The five naturalistic inputs are generated rather than captured photographs; PTE-BASE-001's corpus/tool matrix remains open; only one independent renderer has run; memory and runtime budgets are not calibrated (PTE-PERF-003) |
 | Phase 1 — colour and deterministic image foundation | Conforming | `palette-tracer-color`, 70 tests; OKLab reference vectors, hue wrap, alpha-zero invariance, exact-winner oracle, `u8`/`u16` transition | Plane lifetimes not measured with an allocator (PTE-PERF-002) |
 | Phase 2 — segmentation and shared topology | Conforming | `palette-tracer-segment` 28 tests, `palette-tracer-topology` 35 tests; exhaustive 2×2/3×3 pattern oracle; reflection and rotation congruence | Tiling and tile reconciliation absent (PTE-SEG-018/019) |
 | Phase 3 — subpixel boundaries and curve fitting | Partly conforming | §10.3 closed-form coverage inversion, §10.4 normals/confidence and shared multi-colour junctions, §10.5 bounded optimisation: `palette-tracer-aa`, 30 tests, `docs/notes/subpixel-antialias.md`, `docs/notes/junction-optimization.md`; §31.2's gates measured in `crates/palette-tracer/tests/subpixel_gates.rs`, junction topology in `crates/palette-tracer/tests/junction_topology.rs`. §11 lines and cubics with bidirectional validation, multi-scale corners and DP segmentation, plus complete-circle recognition: `palette-tracer-geometry`, 55 tests, `docs/notes/curve-fitting.md`, `docs/notes/primitive-recognition.md` | PTE-AA-001's encoded-transfer compatibility extension; §11.4 arcs; non-circular §11.7 primitives |
@@ -180,7 +189,9 @@ the order the remaining ones should be taken in.
 | PTE-DET-001..004 | conforming | Quantised keys, stable heaps, no unordered iteration in an output path | `determinism.rs`, 8 tests, plus `make engine-parity`: the same engine compiled for `wasm32-wasip1` and run under Node's V8 produces byte-identical semantic digests on all 13 fixtures. Browser-engine parity beyond V8 is still unproven |
 | PTE-LIC-001..005 | conforming | MIT-only engine: ADR-0004; clean-room and one-way dependency boundary: ADR-0003; `deny.toml`, `THIRD_PARTY_NOTICES.md` | `make engine-deny` → `advisories ok, bans ok, licenses ok, sources ok`. `cargo metadata` reports the workspace packages as MIT |
 | PTE-NO-042 | conforming | Unimplemented settings are refused by name; implemented settings reach a decision path | `unimplemented_modifiers_are_refused`, `an_unimplemented_profile_is_refused_not_downgraded`, `disabling_thin_feature_protection_changes_the_merge_decision` |
-| PTE-TEST-003/004 | partly | 13 strict synthetic fixtures regenerated from analytic descriptions (`tools/make_fixtures.py`, `make engine-fixtures`); 18 clean-room evaluation inputs under MIT, with complete provenance/digests and fixed 6/6/6 splits (`fixtures/manifests/evaluation-corpus-v1.json`). Thirteen evaluation inputs regenerate byte-identically; five naturalistic inputs are fixed generated assets and are explicitly not metric truth | `make engine-evaluation-corpus` validates all 18 and runs four tests including negative controls. No multiple-resolution or rotation sweep yet; naturalistic coverage is generated rather than captured photography |
+| PTE-TEST-003/004 | partly | 13 strict synthetic fixtures regenerated from analytic descriptions (`tools/make_fixtures.py`, `make engine-fixtures`); 18 clean-room evaluation inputs under MIT, with complete provenance/digests and fixed 6/6/6 splits. Four analytic inputs carry machine-readable label topology; five naturalistic inputs are explicitly not metric truth | `make engine-evaluation-corpus` validates all 18 and runs 18 tests. No multiple-resolution or rotation sweep yet; naturalistic coverage is generated rather than captured photography |
+| PTE-TEST-005/006/012 | partly | `tools/svg_scorer.py` reports raster, boundary, hard label-topology and editability dimensions separately; its default passes include transparent, white, black and diagnostic backgrounds at 1×/4×/16× | `a_missing_hole_fails_the_topology_gate`, `a_missing_tiny_accent_fails_even_when_the_background_survives`, `a_diagnostic_background_exposes_a_missing_seam`; no independent renderer matrix has run |
+| PTE-TEST-013/014/015 | partly | The scorer consumes arbitrary SVG rather than PTE IR/report, never discloses source pixels to the renderer, records executable/version/digests, and leaves unsupported generated truth unscored. The VTracer stable wrapper records no preprocessing, exposed constraints and unsupported semantics separately | `complexity_is_measured_from_svg_not_an_engine_report`, `cli_records_renderer_identity_and_passes_exact_topology`, `test_external_baseline_tools.py`; one external tracer/fixture has run, not the full fair matrix |
 
 ---
 
@@ -292,6 +303,30 @@ within `0.08 px` and exact equality across all incident chain endpoints.
 
 ---
 
+**Blind SVG scoring now has a proven vertical slice.** Four evaluation inputs
+carry checked component, hole and Euler-characteristic truth. The scorer parses
+arbitrary SVG independently, invokes a caller-pinned renderer without revealing
+the source raster, and reports linear-RGB/alpha/`ΔE_OK`, missing-patch, boundary,
+topology and editability metrics with scorer, manifest, candidate and renderer
+digests. The exact-render end-to-end control passes; missing-hole, tiny-accent
+and diagnostic-seam controls fail the intended independent dimension.
+
+**The first external result is recorded without rounding it up to a matrix.**
+VTracer stable 0.6.15 traced `eval/logo/flat-exact-palette` with no preprocessing,
+no color cap and no fixed palette. It produced 8 paths, 165 cubics, 13 lines,
+508 control points and 10,538 SVG bytes in 0.007551 s with a process peak of
+25,997,312 RSS bytes. Inkscape 1.4.2 rendered all four backgrounds at
+1×/4×/16×. At 1× transparent, PSNR was 26.757687 dB, global SSIM 0.991442559,
+alpha MAE 0.002133681 and missing-patch fraction 0.000013021. Boundary F-score
+was 0.996300211 at 1 px tolerance, symmetric Chamfer 0.123806 px and approximate
+Hausdorff 1.414214 px. The hard topology gate failed: teal split into four
+components rather than two and 706 pixels were outside the declared label
+distance. `baselines/vtracer-0.6.15/` contains the SVG, trace report and blind
+score with all tool and input digests. This is a useful first comparison, not
+an aggregate quality claim.
+
+---
+
 ## Gaps, stated plainly
 
 These are the things a reader would otherwise have to discover.
@@ -313,10 +348,12 @@ These are the things a reader would otherwise have to discover.
    lowering. Rectangles, ellipses, rounded rectangles, polygons, repeated
    radii and §11.4's partial-arc candidate remain unimplemented;
    `geometry.allowArcs` is still refused by name.
-4. **No independent renderer.** The seam gate uses a first-party rasteriser over
-   the typed IR. §18.7's compatibility matrix (`resvg`, Chromium, Firefox,
-   Inkscape, a fabrication importer) is **not satisfied**, and no claim of
-   cross-renderer correctness is made.
+4. **Only one independent renderer has been run.** Inkscape 1.4.2 is pinned by
+   version and executable digest for the first VTracer result, but it is a local
+   external tool rather than a bundled dependency. The engine seam gate still
+   uses a first-party rasteriser over typed IR. §18.7's compatibility matrix
+   (`resvg`, Chromium, Firefox, Inkscape, a fabrication importer) is **not
+   satisfied**, and no cross-renderer claim is made.
 5. **Native-versus-WASM parity is established for V8, not for browsers.**
    `make engine-parity` compiles `pte` for `wasm32-wasip1`, runs it under Node's
    WASI, and compares semantic digests against the native build across all 13
@@ -333,10 +370,12 @@ These are the things a reader would otherwise have to discover.
    not a measured optimum. §31's
    numbers are "initial engineering gates". The synthetic corpus now exists;
    calibrating against it does not.
-7. **No baseline comparison.** PTE-BASE-001 asks for VTracer, Potrace, AutoTrace
-   and ImageTracerJS benchmarks and §39.1 for a blind SVG scorer that can grade
-   an arbitrary external SVG. Neither exists, so "252 segments" has nothing to
-   be better or worse *than*.
+7. **The baseline matrix is almost entirely open.** One VTracer stable 0.6.15
+   result exists for one analytic train fixture. VTracer 1.0 alpha, the rest of
+   the corpus, PTE, Potrace, AutoTrace and ImageTracerJS have not run. There is
+   no aggregate ranking, and generated inputs remain comparative-only rather
+   than metric truth. The scorer's observed roughly nine-minute 16× run is not
+   yet an instrumented performance result or a calibrated budget.
 8. **No fuzzing, no benchmarks, no allocator instrumentation.** §30, §29 and
    PTE-PERF-002/005 are untouched. The adversarial *cases* appear in tests
    (checkerboards, noise, resource limits, a 2000-sample random walk); the

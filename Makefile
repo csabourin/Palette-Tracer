@@ -1,7 +1,8 @@
 PYTHON := .venv/bin/python
 
 .PHONY: test test-unit test-conformance conformance phase0 verify-env install-dev web \
-	engine-test engine-lint engine-wasm engine-deny engine-trace engine-evaluation-corpus
+	engine-test engine-lint engine-wasm engine-deny engine-trace engine-evaluation-corpus engine-svg-score \
+	engine-vtracer-stable-baseline
 
 test:
 	$(PYTHON) -m pytest
@@ -78,7 +79,45 @@ engine-corpus: engine-fixtures
 # conformance corpus or calibrate any threshold.
 engine-evaluation-corpus:
 	python3 engine/tools/validate_evaluation_corpus.py
-	python3 -m unittest engine/tools/test_evaluation_corpus.py
+	python3 -m unittest engine/tools/test_evaluation_corpus.py engine/tools/test_svg_scorer.py engine/tools/test_external_baseline_tools.py
+
+# SPEC §39 issue 1: score an SVG without consulting PTE's report or IR.
+# The caller supplies and pins an independent renderer command template.
+ENGINE_SCORE_FIXTURE ?=
+ENGINE_SCORE_SVG ?=
+ENGINE_SCORE_RENDERER ?=
+ENGINE_SCORE_RENDERER_VERSION ?=
+ENGINE_SCORE_OUTPUT ?= /tmp/pte-svg-score.json
+engine-svg-score:
+	@test -n "$(ENGINE_SCORE_FIXTURE)" || (echo "set ENGINE_SCORE_FIXTURE" >&2; exit 2)
+	@test -n "$(ENGINE_SCORE_SVG)" || (echo "set ENGINE_SCORE_SVG" >&2; exit 2)
+	@test -n "$(ENGINE_SCORE_RENDERER)" || (echo "set ENGINE_SCORE_RENDERER" >&2; exit 2)
+	python3 engine/tools/svg_scorer.py \
+		--fixture "$(ENGINE_SCORE_FIXTURE)" \
+		--svg "$(ENGINE_SCORE_SVG)" \
+		--renderer-command "$(ENGINE_SCORE_RENDERER)" \
+		--renderer-version-command "$(ENGINE_SCORE_RENDERER_VERSION)" \
+		--output "$(ENGINE_SCORE_OUTPUT)"
+
+# PTE-BASE-001 vertical slice: one pinned VTracer stable fixture, scored by a
+# caller-selected Inkscape 1.4.2 executable. The wrappers refuse other versions.
+ENGINE_BASELINE_PYTHON ?= .venv/bin/python
+ENGINE_INKSCAPE ?=
+ENGINE_BASELINE_DIR ?= engine/baselines/vtracer-0.6.15
+engine-vtracer-stable-baseline:
+	@test -n "$(ENGINE_INKSCAPE)" || (echo "set ENGINE_INKSCAPE" >&2; exit 2)
+	$(ENGINE_BASELINE_PYTHON) engine/tools/vtracer_stable_baseline.py \
+		--input engine/fixtures/synthetic/evaluation/logos/flat-logo.png \
+		--output $(ENGINE_BASELINE_DIR)/eval-logo-flat-exact-palette.svg \
+		--report $(ENGINE_BASELINE_DIR)/eval-logo-flat-exact-palette-trace.json
+	python3 engine/tools/svg_scorer.py \
+		--fixture eval/logo/flat-exact-palette \
+		--svg $(ENGINE_BASELINE_DIR)/eval-logo-flat-exact-palette.svg \
+		--renderer-command \
+		'python3 engine/tools/inkscape_renderer.py --inkscape "$(ENGINE_INKSCAPE)" {svg} {output} {width} {height} {background}' \
+		--renderer-version-command \
+		'python3 engine/tools/inkscape_renderer.py --inkscape "$(ENGINE_INKSCAPE)" --version' \
+		--output $(ENGINE_BASELINE_DIR)/eval-logo-flat-exact-palette-score.json
 
 # End-to-end on the repository's own sample. `pte` reads Netpbm, not PNG:
 # the core takes decoded pixels (PTE-ARCH-001) and no codec adapter is built.

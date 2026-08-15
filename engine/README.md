@@ -15,6 +15,12 @@ order.
 make engine-test          # cargo test --workspace
 make engine-lint          # fmt + clippy -D warnings
 make engine-wasm          # cargo check --target wasm32-unknown-unknown
+make engine-evaluation-corpus  # validate corpus truth and scorer controls
+python3 engine/tools/svg_scorer.py --help  # blindly grade an arbitrary SVG
+
+# Reproduce the first external baseline (quoted path may contain spaces)
+make engine-vtracer-stable-baseline \
+  ENGINE_INKSCAPE='/path/to/pinned/Inkscape-1.4.2/inkscape'
 
 # Trace the repository's own sample image
 python3 engine/tools/png_to_ppm.py examples/sample.png /tmp/sample.pam
@@ -32,16 +38,20 @@ one stream; sending both to `-` is refused rather than concatenated.
 it is written to be believed rather than to be encouraging.
 
 The short version: the colour pipeline, segmentation, shared topology, §10
-subpixel reconstruction, §11 curve fitting and the SVG serialiser are built and
-tested. The analytic §31.2 circle gates pass; both corpus circles and the
-antialiased star now have the expected two faces (the star formerly had 47).
-Junction optimisation remains partial:
-§10.4's barycentric weights exist, but junction positions are still pinned.
+subpixel reconstruction, shared multi-colour junction optimization, §11 curve
+fitting and the SVG serialiser are built and tested. The analytic §31.2 circle
+gates pass; both corpus circles and the antialiased star have the expected two
+faces. Complete supported circles can remain semantic `<circle>` primitives,
+with an opaque neighbour traversing the same boundary as exact arcs.
+
+Generic partial arcs, non-circular primitives, centreline strokes, gradients
+and fabrication are not built. Requests for unsupported behavior return an
+error naming the requirement rather than quietly producing something else.
 See `docs/IMPLEMENTATION_STATUS.md` for the exact claims and gaps.
 
-Arcs, primitive recognition, strokes, gradients and fabrication are not built,
-and asking for them returns an error naming the requirement rather than quietly
-producing something else.
+The first external measurement is VTracer stable 0.6.15 on one analytic logo,
+rendered by Inkscape 1.4.2. It is evidence for the harness, not completion of
+the §29 matrix; see `baselines/README.md` and the recorded JSON reports.
 
 ## Layout
 

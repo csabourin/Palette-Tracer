@@ -1,0 +1,56 @@
+{
+  "baseline": {
+    "license": "MIT",
+    "line": "stable",
+    "name": "VTracer",
+    "nativeExtension": "/home/csabourin/Palette-Tracer/.venv/lib/python3.12/site-packages/vtracer/vtracer.cpython-312-x86_64-linux-gnu.so",
+    "nativeExtensionSha256": "600cec2e7e1f7efcf67918eb01cbd9ec822e167c7e64f94a74df2cf0cb6a7455",
+    "package": "vtracer",
+    "version": "0.6.15"
+  },
+  "configuration": {
+    "color_precision": 8,
+    "colormode": "color",
+    "corner_threshold": 60,
+    "filter_speckle": 0,
+    "hierarchical": "cutout",
+    "layer_difference": 0,
+    "length_threshold": 4.0,
+    "max_iterations": 10,
+    "mode": "spline",
+    "path_precision": 8,
+    "splice_threshold": 45
+  },
+  "fairness": {
+    "colorCount": "not capped; stable Python API exposes no maximum-color setting",
+    "memoryLimitBytes": null,
+    "palette": "not supplied; stable Python API exposes no fixed-palette setting",
+    "timeoutSeconds": null,
+    "unsupportedSemantics": [
+      "fixed role-aware palette",
+      "protected topology declaration",
+      "fabrication semantics"
+    ]
+  },
+  "input": {
+    "path": "/home/csabourin/Palette-Tracer/engine/fixtures/synthetic/evaluation/logos/flat-logo.png",
+    "preprocessing": "none",
+    "sha256": "ea93ebed2a84feda70209925490a884507c6fcc03292eadd3085d64964abc291"
+  },
+  "measurement": {
+    "peakRssBytes": 25997312,
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "wallTimeSeconds": 0.007551
+  },
+  "output": {
+    "bytes": 10538,
+    "path": "/home/csabourin/Palette-Tracer/engine/baselines/vtracer-0.6.15/eval-logo-flat-exact-palette.svg",
+    "svgSha256": "00dfd68e95a05803d830f4e5e81dbca0f0e423422dd060b25e691f45ae8dae25"
+  },
+  "schemaVersion": 1,
+  "wrapper": {
+    "path": "/home/csabourin/Palette-Tracer/engine/tools/vtracer_stable_baseline.py",
+    "sha256": "1fc68d646e682a059a6c43193fb69427f004c17b1860e33cbc6a1eaabddcbf6a"
+  }
+}
